@@ -2,23 +2,29 @@
 //  ContentView.swift
 //  HoopScout
 //
-//  Created by Christopher Doyle on 4/21/26.
-//
 
 import SwiftUI
 
 struct ContentView: View {
+    @EnvironmentObject private var auth: AuthService
+    @AppStorage("hs_onboarded") private var onboarded: Bool = false
+
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
+        Group {
+            if !auth.isSignedIn {
+                LoginView()
+            } else if !onboarded {
+                OnboardingView(onComplete: {
+                    onboarded = true
+                    Task { await MessagingService.shared.requestAuthorization() }
+                })
+            } else {
+                HoopTabView()
+            }
         }
-        .padding()
     }
 }
 
 #Preview {
-    ContentView()
+    ContentView().environmentObject(AuthService())
 }

@@ -1,0 +1,134 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ============================================================
+    // Reusable validation helpers
+    // ============================================================
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isSelf(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+    function isString(field, min, max) {
+      return field is string && field.size() >= min && field.size() <= max;
+    }
+    function isNonNegInt(field) {
+      return field is int && field >= 0;
+    }
+
+    // ============================================================
+    // users/{uid}
+    // ============================================================
+    match /users/{uid} {
+      allow read: if isSignedIn();
+
+      allow create: if isSelf(uid)
+        && isString(request.resource.data.name, 1, 80)
+        && isString(request.resource.data.handle, 0, 50)
+        && isString(request.resource.data.location, 0, 80)
+        && isString(request.resource.data.bio, 0, 500)
+        && isString(request.resource.data.skill, 0, 30);
+
+      // Owner can update profile fields; the Cloud Function (Admin SDK) may
+      // freely update counts since it bypasses rules.
+      allow update: if isSelf(uid)
+        && (!('name' in request.resource.data) || isString(request.resource.data.name, 1, 80))
+        && (!('handle' in request.resource.data) || isString(request.resource.data.handle, 0, 50))
+        && (!('location' in request.resource.data) || isString(request.resource.data.location, 0, 80))
+        && (!('bio' in request.resource.data) || isString(request.resource.data.bio, 0, 500))
+        && (!('skill' in request.resource.data) || isString(request.resource.data.skill, 0, 30))
+        && (!('fcmToken' in request.resource.data) || isString(request.resource.data.fcmToken, 0, 1024));
+
+      allow delete: if isSelf(uid);
+
+      // ---- users/{uid}/following/{targetUid} ----
+      match /following/{targetUid} {
+        allow read: if isSignedIn();
+        allow create: if isSelf(uid)
+          && uid != targetUid
+          && isString(request.resource.data.name, 1, 80)
+          && isString(request.resource.data.initials, 1, 4);
+        allow delete: if isSelf(uid);
+        allow update: if false;
+      }
+
+      // ---- users/{uid}/followers/{followerUid} ----
+      match /followers/{followerUid} {
+        allow read: if isSignedIn();
+        allow write: if false; // Server-only (Cloud Function via Admin SDK)
+      }
+    }
+
+    // ============================================================
+    // courts/{courtId}
+    // ============================================================
+    match /courts/{courtId} {
+      allow read: if isSignedIn();
+
+      allow create: if isSignedIn()
+        && request.resource.data.keys().hasOnly(
+          ['name', 'address', 'lat', 'lon', 'maxCap', 'skill', 'type',
+           'playingCount', 'updatedAt'])
+        && isString(request.resource.data.name, 1, 120)
+        && isString(request.resource.data.address, 0, 200)
+        && request.resource.data.lat is number
+        && request.resource.data.lon is number
+        && request.resource.data.maxCap is int
+        && request.resource.data.maxCap >= 0 && request.resource.data.maxCap <= 500;
+
+      allow update: if isSignedIn()
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['playingCount', 'updatedAt', 'name', 'address',
+                      'lat', 'lon', 'maxCap', 'skill', 'type'])
+        && (
+          !('playingCount' in request.resource.data.diff(resource.data).affectedKeys())
+          || (request.resource.data.playingCount == (resource.data.get('playingCount', 0) + 1)
+              || request.resource.data.playingCount == (resource.data.get('playingCount', 0) - 1))
+        );
+
+      allow delete: if false;
+
+      // ---- courts/{courtId}/checkIns/{uid} ----
+      match /checkIns/{uid} {
+        allow read: if isSignedIn();
+        allow create, update: if isSelf(uid)
+          && request.resource.data.uid == uid
+          && isString(request.resource.data.displayName, 1, 80)
+          && isString(request.resource.data.initials, 1, 4);
+        allow delete: if isSelf(uid);
+      }
+    }
+
+    // ============================================================
+    // threads/{threadId}
+    // ============================================================
+    match /threads/{threadId} {
+      allow read: if isSignedIn()
+        && request.auth.uid in resource.data.participants;
+
+      allow create: if isSignedIn()
+        && request.auth.uid in request.resource.data.participants
+        && request.resource.data.participants.size() == 2;
+
+      allow update: if isSignedIn()
+        && request.auth.uid in resource.data.participants;
+
+      allow delete: if false;
+
+      // ---- threads/{threadId}/messages/{messageId} ----
+      match /messages/{messageId} {
+        allow read: if isSignedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants;
+
+        allow create: if isSignedIn()
+          && request.auth.uid == request.resource.data.senderId
+          && request.auth.uid in get(/databases/$(database)/documents/threads/$(threadId)).data.participants
+          && isString(request.resource.data.text, 1, 2000);
+
+        allow update, delete: if false;
+      }
+    }
+  }
+}

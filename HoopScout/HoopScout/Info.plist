@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>HoopScout uses your location to find basketball courts near you and to check you in to a court when you arrive.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Granting "Always" lets HoopScout auto-check you in when you arrive at a court — even if the app is closed.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>Granting "Always" lets HoopScout auto-check you in when you arrive at a court — even if the app is closed.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>HoopScout uses your photo library so you can pick a profile picture.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>HoopScout saves images to your photo library when you tap save.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>HoopScout can use your camera to take a profile picture.</string>
+	<key>NSUserNotificationsUsageDescription</key>
+	<string>HoopScout uses notifications to alert you about check-ins, ratings, and messages.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+		<string>remote-notification</string>
+		<string>fetch</string>
+	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.965752324850-71p6oo5tgmr9k90pvdft56ph5knr5etc</string>
+			</array>
+		</dict>
+	</array>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+</dict>
+</plist>
