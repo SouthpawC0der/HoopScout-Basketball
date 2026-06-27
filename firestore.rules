@@ -17,6 +17,28 @@ service cloud.firestore {
     function isNonNegInt(field) {
       return field is int && field >= 0;
     }
+    // True when the signed-in caller has a follower entry on the target's
+    // followers subcollection (i.e. caller follows the target). Costs 1 read.
+    function followsAuthor(authorUid) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(authorUid)/followers/$(request.auth.uid));
+    }
+    // True when the signed-in caller's user doc carries accountKind == "gym".
+    // Costs 1 read; cache where possible.
+    function callerIsGym() {
+      return isSignedIn()
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('accountKind', '') == 'gym';
+    }
+    // True when the caller is a gym AND their subscription (trial or paid)
+    // hasn't expired. Gates ad creation and article posting. Costs 1 read.
+    function callerHasActiveGymSub() {
+      let userData = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      return isSignedIn()
+        && userData.get('accountKind', '') == 'gym'
+        && (userData.get('subscriptionStatus', '') in ['trial', 'active'])
+        && ('subscriptionExpiresAt' in userData)
+        && userData.subscriptionExpiresAt > request.time;
+    }
 
     // ============================================================
     // users/{uid}
@@ -50,11 +72,34 @@ service cloud.firestore {
         && (!('location' in request.resource.data.diff(resource.data).affectedKeys()) || (isSelf(uid) && isString(request.resource.data.location, 0, 80)))
         && (!('bio' in request.resource.data.diff(resource.data).affectedKeys()) || (isSelf(uid) && isString(request.resource.data.bio, 0, 500)))
         && (!('skill' in request.resource.data.diff(resource.data).affectedKeys()) || (isSelf(uid) && isString(request.resource.data.skill, 0, 30)))
-        && (!('fcmToken' in request.resource.data.diff(resource.data).affectedKeys()) || (isSelf(uid) && isString(request.resource.data.fcmToken, 0, 1024)))
+        // fcmToken moved to users/{uid}/private/profile. Reject writes to
+        // the public doc so it can't be re-leaked.
+        && !('fcmToken' in request.resource.data.diff(resource.data).affectedKeys())
         && (!('photoURL' in request.resource.data.diff(resource.data).affectedKeys()) || (isSelf(uid) && isString(request.resource.data.photoURL, 0, 2048)))
         && (!('position' in request.resource.data.diff(resource.data).affectedKeys()) || (isSelf(uid) && isString(request.resource.data.position, 0, 40)))
         && (!('education' in request.resource.data.diff(resource.data).affectedKeys()) || (isSelf(uid) && isString(request.resource.data.education, 0, 40)))
-        && (!('tosAcceptedAt' in request.resource.data.diff(resource.data).affectedKeys()) || isSelf(uid));
+        && (!('tosAcceptedAt' in request.resource.data.diff(resource.data).affectedKeys()) || isSelf(uid))
+        && (!('isPrivate' in request.resource.data.diff(resource.data).affectedKeys()) || (isSelf(uid) && request.resource.data.isPrivate is bool))
+        && (!('accountKind' in request.resource.data.diff(resource.data).affectedKeys()) || (isSelf(uid) && isString(request.resource.data.accountKind, 0, 20)))
+        && (!('businessName' in request.resource.data.diff(resource.data).affectedKeys()) || (isSelf(uid) && isString(request.resource.data.businessName, 0, 120)))
+        // ein, managerFirstName, managerLastName moved to users/{uid}/private/profile.
+        // Reject writes to the public doc so they can't be re-leaked.
+        && !('ein' in request.resource.data.diff(resource.data).affectedKeys())
+        && !('managerFirstName' in request.resource.data.diff(resource.data).affectedKeys())
+        && !('managerLastName' in request.resource.data.diff(resource.data).affectedKeys())
+        && (!('businessAddress' in request.resource.data.diff(resource.data).affectedKeys()) || (isSelf(uid) && isString(request.resource.data.businessAddress, 0, 200)))
+        && (!('gymCourtSize' in request.resource.data.diff(resource.data).affectedKeys()) || (isSelf(uid) && isString(request.resource.data.gymCourtSize, 0, 20)))
+        // Subscription fields are server-managed. Clients cannot write
+        // subscriptionStatus / trialStartedAt / subscriptionExpiresAt /
+        // appStore* — Cloud Functions (validateAppStoreTransaction,
+        // appStoreServerNotificationsV2, stampGymTrialOnCreate) own them.
+        // The Admin SDK bypasses these rules.
+        && !('subscriptionStatus' in request.resource.data.diff(resource.data).affectedKeys())
+        && !('trialStartedAt' in request.resource.data.diff(resource.data).affectedKeys())
+        && !('subscriptionExpiresAt' in request.resource.data.diff(resource.data).affectedKeys())
+        && !('subscriptionUpdatedAt' in request.resource.data.diff(resource.data).affectedKeys())
+        && !('appStoreOriginalTransactionId' in request.resource.data.diff(resource.data).affectedKeys())
+        && !('appStoreProductId' in request.resource.data.diff(resource.data).affectedKeys());
 
       allow delete: if isSelf(uid);
 
@@ -106,6 +151,33 @@ service cloud.firestore {
               && isString(request.resource.data.type, 1, 40)
               && isString(request.resource.data.title, 1, 200)
               && isString(request.resource.data.body, 0, 500));
+      }
+
+      // ---- users/{uid}/private/{docId} ----
+      // Owner-only storage for sensitive PII:
+      //   • ein                 — federal Employer Identification Number
+      //   • fcmToken            — push targeting token
+      //   • managerFirstName /  — staff PII for gym accounts
+      //     managerLastName
+      // Nothing in this subcollection is ever readable by anyone other than
+      // the owner. Cloud Functions running with the Admin SDK bypass these
+      // rules and can still read for moderation / receipt validation.
+      match /private/{docId} {
+        allow read, write: if isSelf(uid);
+      }
+
+      // ---- users/{uid}/blocked/{targetUid} ----
+      // Block list is per-user and strictly private. Only the owner can
+      // read it (so blocked users can't enumerate who blocked them) and
+      // only the owner can add/remove entries.
+      match /blocked/{targetUid} {
+        allow read, list: if isSelf(uid);
+        allow create: if isSelf(uid)
+          && uid != targetUid
+          && request.resource.data.keys().hasOnly(['blockedAt'])
+          && request.resource.data.blockedAt is timestamp;
+        allow delete: if isSelf(uid);
+        allow update: if false;
       }
 
       // ---- users/{uid}/ratings/{raterUid} ----
@@ -196,6 +268,119 @@ service cloud.firestore {
     }
 
     // ============================================================
+    // feedPosts/{postId}
+    // ============================================================
+    // Posts written via FeedRepository carry the author's `isPrivate` flag
+    // captured at post time (denormalized for cheap server-side filtering).
+    // A post is readable when ANY of:
+    //   * authorIsPrivate is missing or false (public post), OR
+    //   * the caller is the author, OR
+    //   * the caller follows the author (1 read via exists()).
+    match /feedPosts/{postId} {
+      allow read: if isSignedIn()
+        && (
+          !('authorIsPrivate' in resource.data)
+          || resource.data.authorIsPrivate == false
+          || resource.data.authorId == request.auth.uid
+          || followsAuthor(resource.data.authorId)
+        );
+
+      allow create: if isSignedIn()
+        && request.resource.data.authorId == request.auth.uid
+        && isString(request.resource.data.body, 1, 2000)
+        && isString(request.resource.data.authorName, 1, 80)
+        && isString(request.resource.data.authorInitials, 1, 4)
+        && request.resource.data.likes is int
+        && request.resource.data.comments is int
+        && request.resource.data.createdAt is timestamp
+        && (!('authorIsPrivate' in request.resource.data)
+            || request.resource.data.authorIsPrivate is bool)
+        // Only gyms with an active subscription can publish ads. Non-gym
+        // callers must omit the field or set it to false.
+        && (!('isAd' in request.resource.data)
+            || request.resource.data.isAd == false
+            || (request.resource.data.isAd == true && callerHasActiveGymSub()));
+
+      // Only the author can update their own post, and only the mutable
+      // content/counter fields. authorId, authorIsPrivate, authorIsGym,
+      // isAd, createdAt, etc. are locked once written so a user can't
+      // sneak an ad in via update or change attribution.
+      allow update: if isSignedIn()
+        && resource.data.authorId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['body', 'likes', 'comments', 'moodLabel']);
+
+      allow delete: if isSignedIn()
+        && resource.data.authorId == request.auth.uid;
+    }
+
+    // ============================================================
+    // articles/{articleId}
+    // ============================================================
+    // Local news authored by gym/business accounts. Surfaces in the News
+    // tab of the feed. Any signed-in user can read; only gyms can create.
+    match /articles/{articleId} {
+      allow read: if isSignedIn();
+
+      allow create: if isSignedIn()
+        && callerHasActiveGymSub()
+        && request.resource.data.authorId == request.auth.uid
+        && isString(request.resource.data.title, 1, 200)
+        && isString(request.resource.data.body, 1, 4000)
+        && isString(request.resource.data.authorName, 1, 120)
+        && request.resource.data.createdAt is timestamp
+        // url is optional. When present it must be http/https only —
+        // rejects javascript:, data:, file:, custom schemes etc.
+        && (!('url' in request.resource.data)
+            || (isString(request.resource.data.url, 0, 2048)
+                && request.resource.data.url.matches('^https?://[^/].*')));
+
+      allow update: if isSignedIn()
+        && resource.data.authorId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['title', 'body', 'url']);
+      allow delete: if isSignedIn()
+        && resource.data.authorId == request.auth.uid;
+    }
+
+    // ============================================================
+    // gymTrialClaims/{appleUserIdentifier}  (server-only)
+    // appStoreLinks/{originalTransactionId} (server-only)
+    // ============================================================
+    // Subscription bookkeeping owned exclusively by Cloud Functions
+    // (stampGymTrialOnCreate, validateAppStoreTransaction). Clients must
+    // never read or write these — the Admin SDK bypasses the deny.
+    match /gymTrialClaims/{appleUserIdentifier} {
+      allow read, write: if false;
+    }
+    match /appStoreLinks/{originalTransactionId} {
+      allow read, write: if false;
+    }
+
+    // ============================================================
+    // reports/{reportId}
+    // ============================================================
+    // User-submitted moderation reports. Required by App Store Guideline 1.2.
+    // Write-only from the client — only moderators (out-of-band, via Cloud
+    // Functions / Firebase Console with admin SDK) can read or update.
+    match /reports/{reportId} {
+      allow read, list: if false;
+      allow update, delete: if false;
+
+      allow create: if isSignedIn()
+        && request.resource.data.reporterUid == request.auth.uid
+        && isString(request.resource.data.entityType, 1, 40)
+        && isString(request.resource.data.entityId, 1, 200)
+        && isString(request.resource.data.reason, 1, 40)
+        && request.resource.data.status == 'pending'
+        && request.resource.data.createdAt == request.time
+        && (!('reportedUid' in request.resource.data)
+            || isString(request.resource.data.reportedUid, 0, 128))
+        && (!('details' in request.resource.data)
+            || isString(request.resource.data.details, 0, 2000));
+    }
+
+    // ============================================================
     // threads/{threadId}
     // ============================================================
     match /threads/{threadId} {
@@ -223,6 +408,14 @@ service cloud.firestore {
 
         allow update, delete: if false;
       }
+    }
+
+    // ============================================================
+    // Default deny — any collection not explicitly matched above is
+    // unreachable. Add a `match` block before deploying new features.
+    // ============================================================
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

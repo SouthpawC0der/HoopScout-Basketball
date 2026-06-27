@@ -26,6 +26,29 @@ final class AuthService: ObservableObject {
     /// Nonce used during the in-flight Sign in with Apple request.
     fileprivate var currentNonce: String?
 
+    /// Form data captured from GymSignUpView before tapping Sign in with
+    /// Apple. Consumed in completeSignInWithApple to write a gym-flavored
+    /// HSUserProfile on first sign-in.
+    fileprivate var pendingGymRegistration: PendingGymRegistration?
+
+    struct PendingGymRegistration {
+        var businessName: String
+        var ein: String
+        var businessAddress: String
+        var businessEmail: String
+        var managerFirstName: String
+        var managerLastName: String
+        /// "small" (≈high school size → $49/yr) or "large" (college+ → $99/yr).
+        var courtSize: String
+    }
+
+    /// Length of the gym free trial in days.
+    static let gymTrialDays: Int = 7
+
+    func setPendingGymRegistration(_ pending: PendingGymRegistration?) {
+        pendingGymRegistration = pending
+    }
+
     var isSignedIn: Bool { firebaseUser != nil }
 
     init() {
@@ -36,12 +59,16 @@ final class AuthService: ObservableObject {
                     await self?.loadProfile(uid: user.uid)
                     NotificationRepository.shared.start(forUid: user.uid)
                     BlockRepository.shared.start(forUid: user.uid)
+                    FriendsRepository.shared.start(forUid: user.uid)
+                    SubscriptionService.shared.start(forUid: user.uid)
                 } else {
                     self?.profileObserveTask?.cancel()
                     self?.profile = nil
                     CheckInService.shared.setActiveProfile(nil)
                     NotificationRepository.shared.stop()
                     BlockRepository.shared.stop()
+                    FriendsRepository.shared.stop()
+                    SubscriptionService.shared.stop()
                 }
             }
         }
@@ -69,21 +96,38 @@ final class AuthService: ObservableObject {
         }
     }
 
-    func signUp(email: String, password: String, name: String) async {
+    func signUp(firstName: String,
+                lastName: String,
+                email: String,
+                confirmEmail: String,
+                password: String,
+                position: String) async {
         isLoading = true; errorMessage = nil
         defer { isLoading = false }
-        let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanFirst = firstName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanLast = lastName.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !cleanName.isEmpty, cleanName.count <= 80 else {
-            errorMessage = "Name must be 1–80 characters."
+        let cleanConfirm = confirmEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let cleanPosition = position.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanName = "\(cleanFirst) \(cleanLast)".trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanFirst.isEmpty, !cleanLast.isEmpty, cleanName.count <= 80 else {
+            errorMessage = "Enter your first and last name."
             return
         }
         guard cleanEmail.contains("@"), cleanEmail.count <= 254 else {
             errorMessage = "Enter a valid email."
             return
         }
+        guard cleanEmail == cleanConfirm else {
+            errorMessage = "Emails don't match."
+            return
+        }
         guard password.count >= 6, password.count <= 128 else {
             errorMessage = "Password must be 6–128 characters."
+            return
+        }
+        guard !cleanPosition.isEmpty, cleanPosition.count <= 40 else {
+            errorMessage = "Pick a position."
             return
         }
         do {
@@ -98,7 +142,8 @@ final class AuthService: ObservableObject {
                 runs: 0,
                 followers: 0,
                 following: 0,
-                createdAt: Date()
+                createdAt: Date(),
+                position: cleanPosition
             )
             try await UserRepository.shared.create(profile)
             self.profile = profile
@@ -134,14 +179,17 @@ final class AuthService: ObservableObject {
         // Best-effort: tombstone the user doc so other clients stop showing
         // the profile, and so a server-side cleanup job can finish removing
         // subcollections (followers/following, blocks, reports, etc).
-        try? await Firestore.firestore().collection("users").document(uid).setData([
+        let userRef = Firestore.firestore().collection("users").document(uid)
+        try? await userRef.setData([
             "deletedAt": FieldValue.serverTimestamp(),
             "name": "Deleted user",
             "handle": "@deleted",
             "bio": "",
-            "photoURL": NSNull(),
-            "fcmToken": FieldValue.delete()
+            "photoURL": NSNull()
         ], merge: true)
+        // Sensitive PII (EIN, manager names, FCM token) lives in the private
+        // subcollection — purge it explicitly so deletion is complete.
+        try? await userRef.collection("private").document("profile").delete()
 
         do {
             try await user.delete()
@@ -198,31 +246,72 @@ final class AuthService: ObservableObject {
             // Create a profile if this is the user's first sign-in.
             let existing = try? await UserRepository.shared.fetch(uid: result.user.uid)
             if existing == nil {
-                let derivedName: String = {
-                    if let comps = credential.fullName {
-                        let parts = [comps.givenName, comps.familyName].compactMap { $0 }
-                        let joined = parts.joined(separator: " ")
-                        if !joined.isEmpty { return joined }
-                    }
-                    return result.user.displayName ?? "Hooper"
-                }()
-                let email = credential.email ?? result.user.email ?? ""
-                let profile = HSUserProfile(
-                    id: result.user.uid,
-                    name: derivedName,
-                    handle: email.isEmpty
-                        ? "@hooper_\(result.user.uid.prefix(6))"
-                        : defaultHandle(from: email),
-                    location: "",
-                    bio: "",
-                    skill: "Casual",
-                    runs: 0,
-                    followers: 0,
-                    following: 0,
-                    createdAt: Date()
-                )
-                try await UserRepository.shared.create(profile)
-                self.profile = profile
+                if let gym = pendingGymRegistration {
+                    let email = !gym.businessEmail.isEmpty
+                        ? gym.businessEmail
+                        : (credential.email ?? result.user.email ?? "")
+                    // Apple's stable sub claim — same value across re-signups
+                    // with the same Apple ID. Used by `stampGymTrialOnCreate`
+                    // to deny a fresh 7-day trial if this Apple ID already
+                    // claimed one under a previous Firebase uid.
+                    let appleUserId = credential.user
+                    // Trial fields (subscriptionStatus / trialStartedAt /
+                    // subscriptionExpiresAt) are intentionally NOT set here.
+                    // The `stampGymTrialOnCreate` Cloud Function stamps them
+                    // server-side so the trial clock can't be lied about.
+                    // Rules reject client writes to those fields anyway.
+                    let profile = HSUserProfile(
+                        id: result.user.uid,
+                        name: gym.businessName,
+                        handle: email.isEmpty
+                            ? "@gym_\(result.user.uid.prefix(6))"
+                            : defaultHandle(from: email),
+                        location: gym.businessAddress,
+                        bio: "",
+                        skill: "Gym",
+                        runs: 0,
+                        followers: 0,
+                        following: 0,
+                        createdAt: Date(),
+                        accountKind: "gym",
+                        businessName: gym.businessName,
+                        ein: gym.ein,
+                        businessAddress: gym.businessAddress,
+                        managerFirstName: gym.managerFirstName,
+                        managerLastName: gym.managerLastName,
+                        appleUserIdentifier: appleUserId,
+                        gymCourtSize: gym.courtSize
+                    )
+                    try await UserRepository.shared.create(profile)
+                    self.profile = profile
+                    pendingGymRegistration = nil
+                } else {
+                    let derivedName: String = {
+                        if let comps = credential.fullName {
+                            let parts = [comps.givenName, comps.familyName].compactMap { $0 }
+                            let joined = parts.joined(separator: " ")
+                            if !joined.isEmpty { return joined }
+                        }
+                        return result.user.displayName ?? "Hooper"
+                    }()
+                    let email = credential.email ?? result.user.email ?? ""
+                    let profile = HSUserProfile(
+                        id: result.user.uid,
+                        name: derivedName,
+                        handle: email.isEmpty
+                            ? "@hooper_\(result.user.uid.prefix(6))"
+                            : defaultHandle(from: email),
+                        location: "",
+                        bio: "",
+                        skill: "Casual",
+                        runs: 0,
+                        followers: 0,
+                        following: 0,
+                        createdAt: Date()
+                    )
+                    try await UserRepository.shared.create(profile)
+                    self.profile = profile
+                }
             }
         } catch {
             errorMessage = error.localizedDescription

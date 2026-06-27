@@ -131,17 +131,32 @@ struct FeedPostCard: View {
                         Text(authorName)
                             .font(.system(size: 14, weight: .bold))
                             .foregroundColor(HSColors.gray900)
+                        if post.isAd == true {
+                            Text("AD")
+                                .font(.system(size: 9, weight: .heavy))
+                                .kerning(0.8)
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 5).padding(.vertical, 1.5)
+                                .background(HSColors.court)
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                        }
                         Circle().fill(HSColors.gray300).frame(width: 3, height: 3)
                         Text(post.time)
                             .font(.system(size: 12))
                             .foregroundColor(HSColors.gray500)
                     }
                     HStack(spacing: 6) {
-                        Circle().fill(post.mood.color).frame(width: 6, height: 6)
-                        Text("feeling \(post.mood.label.lowercased())")
-                            .font(.system(size: 11.5, weight: .semibold))
-                            .kerning(0.2)
-                            .foregroundColor(HSColors.gray500)
+                        if post.isAd == true {
+                            Text("Sponsored")
+                                .font(.system(size: 11.5, weight: .semibold))
+                                .foregroundColor(HSColors.gray500)
+                        } else {
+                            Circle().fill(post.mood.color).frame(width: 6, height: 6)
+                            Text("feeling \(post.mood.label.lowercased())")
+                                .font(.system(size: 11.5, weight: .semibold))
+                                .kerning(0.2)
+                                .foregroundColor(HSColors.gray500)
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)

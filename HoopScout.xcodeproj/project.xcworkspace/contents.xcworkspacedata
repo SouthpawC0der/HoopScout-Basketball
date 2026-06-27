@@ -4,4 +4,11 @@
    <FileRef
       location = "self:">
    </FileRef>
+   <Group
+      location = "group:functions"
+      name = "functions">
+      <FileRef
+         location = "group:subscription.js">
+      </FileRef>
+   </Group>
 </Workspace>

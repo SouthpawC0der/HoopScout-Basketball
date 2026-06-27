@@ -19,6 +19,7 @@ import AVKit
 struct HighlightsView: View {
     @EnvironmentObject private var auth: AuthService
     @EnvironmentObject private var blocks: BlockRepository
+    @EnvironmentObject private var friends: FriendsRepository
     @State private var highlights: [HSHighlight] = HSHighlightMock.highlights
     @State private var currentIndex: Int = 0
     @State private var liked: Set<String> = []
@@ -26,7 +27,17 @@ struct HighlightsView: View {
     @State private var dragOffset: CGFloat = 0
     
     private var displayed: [HSHighlight] {
-        highlights.filter { !blocks.isBlocked($0.authorId) }
+        highlights
+            .filter { !blocks.isBlocked($0.authorId) }
+            .filter(canView)
+    }
+
+    /// Hide highlights from private accounts unless mine or I follow the
+    /// author. Highlights with no `authorIsPrivate` (mocks) stay visible.
+    private func canView(_ h: HSHighlight) -> Bool {
+        guard h.authorIsPrivate == true else { return true }
+        if h.authorId == auth.profile?.id { return true }
+        return friends.followingIds.contains(h.authorId)
     }
     
     var body: some View {

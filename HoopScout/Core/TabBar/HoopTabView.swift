@@ -11,20 +11,40 @@ struct HoopTabView: View {
     @EnvironmentObject private var tabRouter: TabRouter
     @State private var ratingCourt: RatingCourtPayload?
     @State private var ratingUser: RatingUserPayload?
+    @State private var showHighlightComposer = false
+
+    private var tabSelection: Binding<Int> {
+        Binding(
+            get: { tabRouter.selectedTab },
+            set: { newValue in
+                if newValue == TabRouter.upload {
+                    showHighlightComposer = true
+                } else {
+                    tabRouter.selectedTab = newValue
+                }
+            }
+        )
+    }
 
     var body: some View {
-        TabView(selection: $tabRouter.selectedTab) {
-            HomeView()
+        TabView(selection: tabSelection) {
+            HighlightsView()
                 .tabItem {
-                    Label("Home", systemImage: tabRouter.selectedTab == TabRouter.home ? "house.fill" : "house")
+                    Label("Highlights", systemImage: tabRouter.selectedTab == TabRouter.highlights ? "film.fill" : "film")
                 }
-                .tag(TabRouter.home)
+                .tag(TabRouter.highlights)
 
             CourtsView()
                 .tabItem {
                     Label("Courts", systemImage: tabRouter.selectedTab == TabRouter.courts ? "basketball.fill" : "basketball")
                 }
                 .tag(TabRouter.courts)
+
+            Color.clear
+                .tabItem {
+                    Label("Upload", systemImage: "plus.circle.fill")
+                }
+                .tag(TabRouter.upload)
 
             FeedView()
                 .tabItem {
@@ -37,12 +57,6 @@ struct HoopTabView: View {
                     Label("Messages", systemImage: tabRouter.selectedTab == TabRouter.messages ? "message.fill" : "message")
                 }
                 .tag(TabRouter.messages)
-
-            ProfileView()
-                .tabItem {
-                    Label("Profile", systemImage: tabRouter.selectedTab == TabRouter.profile ? "person.fill" : "person")
-                }
-                .tag(TabRouter.profile)
         }
         .tint(HSColors.navy)
         .onChange(of: messaging.pendingThreadId) { _, newValue in
@@ -70,6 +84,13 @@ struct HoopTabView: View {
                          ratedInitials: payload.initials,
                          courtId: payload.courtId)
                 .presentationDetents([.large])
+        }
+        .sheet(isPresented: $showHighlightComposer) {
+            HighlightComposerView { _ in
+                showHighlightComposer = false
+                tabRouter.selectedTab = TabRouter.highlights
+            }
+            .presentationDetents([.large])
         }
     }
 }

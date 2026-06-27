@@ -11,11 +11,11 @@ import Combine
 
 @MainActor
 final class TabRouter: ObservableObject {
-    @Published var selectedTab: Int = 0
+    @Published var selectedTab: Int = 3
 
-    static let home = 0
+    static let highlights = 0
     static let courts = 1
-    static let feed = 2
-    static let messages = 3
-    static let profile = 4
+    static let upload = 2
+    static let feed = 3
+    static let messages = 4
 }

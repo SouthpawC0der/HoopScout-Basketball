@@ -12,7 +12,12 @@ struct FeedComposerView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var draft: String = ""
     @State private var mood: HSFeedPost.Mood?
+    @State private var markAsAd: Bool = false
+    @State private var showPaywall = false
     @FocusState private var focused: Bool
+
+    private var isGym: Bool { auth.profile?.isGym == true }
+    private var hasActiveSub: Bool { auth.profile?.hasActiveGymSubscription == true }
 
     private var canPost: Bool {
         !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -24,6 +29,10 @@ struct FeedComposerView: View {
             toolbar
             authorRow
             textArea
+            if isGym {
+                adToggle
+                    .padding(.top, 10)
+            }
             sectionLabel("How you feeling?")
                 .padding(.top, 8)
             moodChips
@@ -39,6 +48,43 @@ struct FeedComposerView: View {
         .padding(.bottom, 28)
         .background(Color.white)
         .onAppear { focused = true }
+        .sheet(isPresented: $showPaywall) {
+            GymPaywallView()
+        }
+    }
+
+    private var adToggle: some View {
+        Toggle(isOn: Binding(
+            get: { markAsAd },
+            set: { newValue in
+                if newValue && !hasActiveSub {
+                    showPaywall = true
+                    return
+                }
+                markAsAd = newValue
+            }
+        )) {
+            HStack(spacing: 8) {
+                Text("AD")
+                    .font(.system(size: 9, weight: .heavy))
+                    .kerning(0.8)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(HSColors.court)
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Mark as sponsored")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(HSColors.gray900)
+                    Text(hasActiveSub
+                         ? "Adds an AD badge to your post"
+                         : "Membership required")
+                        .font(.system(size: 11))
+                        .foregroundColor(HSColors.gray500)
+                }
+            }
+        }
+        .tint(HSColors.navy)
     }
 
     // MARK: - Sections
@@ -199,7 +245,8 @@ struct FeedComposerView: View {
             likes: 0,
             comments: 0,
             attachment: nil,
-            createdAt: Date()
+            createdAt: Date(),
+            isAd: (isGym && markAsAd) ? true : nil
         )
     }
 }

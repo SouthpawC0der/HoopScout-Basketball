@@ -9,6 +9,10 @@ const { logger } = require("firebase-functions");
 
 initializeApp();
 
+// Re-export subscription / receipt-validation functions so `firebase deploy`
+// picks them up alongside the originals defined in this file.
+Object.assign(exports, require("./subscription"));
+
 function computeInitials(name) {
   if (!name) return "?";
   const parts = name.trim().split(/\s+/);

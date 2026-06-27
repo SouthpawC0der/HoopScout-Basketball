@@ -18,9 +18,39 @@ import FirebaseFirestore
 final class FriendsRepository: ObservableObject {
     static let shared = FriendsRepository()
 
+    /// Live set of uids the signed-in user follows. Used by UGC views to gate
+    /// content from private accounts (you can see a private hooper's posts
+    /// only if you follow them or it's your own).
+    @Published private(set) var followingIds: Set<String> = []
+
     private var db: Firestore { Firestore.firestore() }
     private func userRef(_ uid: String) -> DocumentReference {
         db.collection("users").document(uid)
+    }
+
+    private var followingListener: ListenerRegistration?
+    private var observedUid: String?
+
+    // MARK: - Lifecycle
+
+    /// Start observing the signed-in user's following list. Safe to re-call
+    /// when auth changes — rebinds to the new uid.
+    func start(forUid uid: String) {
+        guard observedUid != uid else { return }
+        stop()
+        observedUid = uid
+        followingListener = userRef(uid).collection("following")
+            .addSnapshotListener { [weak self] snap, _ in
+                let ids = Set((snap?.documents ?? []).map { $0.documentID })
+                Task { @MainActor in self?.followingIds = ids }
+            }
+    }
+
+    func stop() {
+        followingListener?.remove()
+        followingListener = nil
+        observedUid = nil
+        followingIds = []
     }
 
     // MARK: - Observe

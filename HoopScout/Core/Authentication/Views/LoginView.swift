@@ -9,57 +9,62 @@ import AuthenticationServices
 struct LoginView: View {
     @EnvironmentObject private var auth: AuthService
 
-    enum Mode { case signIn, signUp }
-    @State private var mode: Mode = .signIn
-    @State private var name: String = ""
     @State private var email: String = ""
     @State private var password: String = ""
 
     var body: some View {
-        ZStack {
-            LinearGradient(colors: [HSColors.navy, HSColors.navyDeep],
-                           startPoint: .top, endPoint: .bottom)
-                .ignoresSafeArea()
+        NavigationStack {
+            ZStack {
+                LinearGradient(colors: [HSColors.navy, HSColors.navyDeep],
+                               startPoint: .top, endPoint: .bottom)
+                    .ignoresSafeArea()
 
-            RadialGradient(colors: [HSColors.court.opacity(0.18), .clear],
-                           center: .top, startRadius: 0, endRadius: 320)
-                .frame(height: 340)
-                .frame(maxHeight: .infinity, alignment: .top)
-                .allowsHitTesting(false)
+                RadialGradient(colors: [HSColors.court.opacity(0.18), .clear],
+                               center: .top, startRadius: 0, endRadius: 320)
+                    .frame(height: 340)
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    .allowsHitTesting(false)
 
-            ScrollView {
-                VStack(spacing: 24) {
-                    VStack(spacing: 14) {
-                        HSLogo(size: 56, light: true)
-                        Text("HoopScout")
-                            .font(.system(size: 13, weight: .semibold))
-                            .kerning(3)
-                            .textCase(.uppercase)
-                            .foregroundColor(.white.opacity(0.55))
+                ScrollView {
+                    VStack(spacing: 24) {
+                        VStack(spacing: 14) {
+                            HSLogo(size: 56, light: true)
+                            Text("HoopScout")
+                                .font(.system(size: 13, weight: .semibold))
+                                .kerning(3)
+                                .textCase(.uppercase)
+                                .foregroundColor(.white.opacity(0.55))
+                        }
+                        .padding(.top, 60)
+
+                        Text("Welcome back")
+                            .font(.system(size: 26, weight: .heavy))
+                            .kerning(-0.6)
+                            .foregroundColor(.white)
+
+                        fields
+                        cta
+                        orDivider
+                        appleSignIn
+                        googleSignIn
+                        switcher
+                        forgotPassword
+                        if let err = auth.errorMessage {
+                            Text(err).font(.system(size: 13))
+                                .foregroundColor(.red.opacity(0.9))
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 24)
+                        }
+                        Spacer(minLength: 30)
                     }
-                    .padding(.top, 60)
-
-                    Text(mode == .signIn ? "Welcome back" : "Create your account")
-                        .font(.system(size: 26, weight: .heavy))
-                        .kerning(-0.6)
-                        .foregroundColor(.white)
-
-                    fields
-                    cta
-                    orDivider
-                    appleSignIn
-                    googleSignIn
-                    switcher
-                    if mode == .signIn { forgotPassword }
-                    if let err = auth.errorMessage {
-                        Text(err).font(.system(size: 13))
-                            .foregroundColor(.red.opacity(0.9))
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 24)
-                    }
-                    Spacer(minLength: 30)
+                    .padding(.horizontal, 24)
                 }
-                .padding(.horizontal, 24)
+            }
+            .navigationDestination(for: String.self) { token in
+                switch token {
+                case "signUp": SignUpView()
+                default: EmptyView()
+                }
             }
         }
         .preferredColorScheme(.dark)
@@ -67,16 +72,12 @@ struct LoginView: View {
 
     private var fields: some View {
         VStack(spacing: 10) {
-            if mode == .signUp {
-                inputField("Full name", text: $name)
-                    .textContentType(.name)
-            }
             inputField("Email", text: $email)
                 .textContentType(.emailAddress)
                 .keyboardType(.emailAddress)
                 .textInputAutocapitalization(.never)
             secureField("Password", text: $password)
-                .textContentType(mode == .signIn ? .password : .newPassword)
+                .textContentType(.password)
         }
     }
 
@@ -102,16 +103,13 @@ struct LoginView: View {
 
     private var cta: some View {
         Button {
-            Task {
-                if mode == .signIn { await auth.signIn(email: email, password: password) }
-                else { await auth.signUp(email: email, password: password, name: name) }
-            }
+            Task { await auth.signIn(email: email, password: password) }
         } label: {
             HStack {
                 if auth.isLoading {
                     ProgressView().tint(HSColors.navy)
                 } else {
-                    Text(mode == .signIn ? "Sign in" : "Create account")
+                    Text("Sign in")
                         .font(.system(size: 16, weight: .bold))
                         .kerning(-0.2)
                 }
@@ -128,19 +126,21 @@ struct LoginView: View {
     }
 
     private var canSubmit: Bool {
-        !email.isEmpty && password.count >= 6 && (mode == .signIn || !name.isEmpty)
+        !email.isEmpty && password.count >= 6
     }
 
     private var switcher: some View {
         HStack(spacing: 4) {
-            Text(mode == .signIn ? "Don't have an account?" : "Already have one?")
+            Text("Don't have an account?")
                 .foregroundColor(.white.opacity(0.5))
-            Button(mode == .signIn ? "Sign up" : "Sign in") {
-                withAnimation { mode = (mode == .signIn) ? .signUp : .signIn }
-                auth.errorMessage = nil
+            NavigationLink(value: "signUp") {
+                Text("Sign up")
+                    .foregroundColor(.white)
+                    .fontWeight(.semibold)
             }
-            .foregroundColor(.white)
-            .fontWeight(.semibold)
+            .simultaneousGesture(TapGesture().onEnded {
+                auth.errorMessage = nil
+            })
         }
         .font(.system(size: 13))
     }

@@ -18,6 +18,7 @@ struct HoopScoutApp: App {
     @StateObject private var notifications = NotificationRepository.shared
     @StateObject private var tabRouter = TabRouter()
     @StateObject private var blocks = BlockRepository.shared
+    @StateObject private var subscriptions = SubscriptionService.shared
 
     var body: some Scene {
         WindowGroup {
@@ -32,6 +33,7 @@ struct HoopScoutApp: App {
                 .environmentObject(notifications)
                 .environmentObject(tabRouter)
                 .environmentObject(blocks)
+                .environmentObject(subscriptions)
         }
     }
 }

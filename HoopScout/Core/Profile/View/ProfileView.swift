@@ -71,6 +71,9 @@ struct ProfileView: View {
                 switch token {
                 case "runs": RunsView()
                 case "help": HelpChatView()
+                case "highlights":
+                    UserHighlightsView(userId: user.id ?? "",
+                                       userName: user.name)
                 default: EmptyView()
                 }
             }
@@ -342,20 +345,21 @@ struct ProfileView: View {
             }
             .buttonStyle(.plain)
 
-            ShareLink(item: shareText) {
-                Text("Share profile")
-                    .frame(maxWidth: .infinity).frame(height: 42)
-                    .background(Color.white).foregroundColor(HSColors.navy)
-                    .font(.system(size: 14, weight: .bold))
-                    .overlay(Capsule().stroke(HSColors.gray200, lineWidth: 1))
-                    .clipShape(Capsule())
+            NavigationLink(value: "highlights") {
+                HStack(spacing: 6) {
+                    Image(systemName: "play.rectangle.fill")
+                        .font(.system(size: 13, weight: .bold))
+                    Text("Highlights")
+                }
+                .frame(maxWidth: .infinity).frame(height: 42)
+                .background(Color.white).foregroundColor(HSColors.navy)
+                .font(.system(size: 14, weight: .bold))
+                .overlay(Capsule().stroke(HSColors.gray200, lineWidth: 1))
+                .clipShape(Capsule())
             }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 16)
-    }
-
-    private var shareText: String {
-        "Hoop with me on HoopScout — \(user.handle) (\(user.location))"
     }
 
     private var statsPanel: some View {

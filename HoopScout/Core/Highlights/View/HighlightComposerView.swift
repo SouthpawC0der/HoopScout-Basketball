@@ -246,7 +246,8 @@ struct HighlightComposerView: View {
             authorInitials: auth.profile?.initials ?? "?",
             videoURL: videoURL,
             caption: caption.trimmingCharacters(in: .whitespacesAndNewlines),
-            duration: videoDuration
+            duration: videoDuration,
+            authorIsPrivate: auth.profile?.isPrivate
         )
     }
 }

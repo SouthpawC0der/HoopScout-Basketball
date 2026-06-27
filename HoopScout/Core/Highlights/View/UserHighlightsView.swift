@@ -132,7 +132,7 @@ struct UserHighlightsView: View {
     
     private func highlightThumbnail(_ highlight: HSHighlight) -> some View {
         GeometryReader { geometry in
-            ZStack(alignment: .bottomLeading) {
+            ZStack {
                 // Thumbnail background (mock gradient)
                 Rectangle()
                     .fill(
@@ -142,28 +142,50 @@ struct UserHighlightsView: View {
                             endPoint: .bottomTrailing
                         )
                     )
-                
+
                 // Play icon overlay
-                VStack {
-                    Image(systemName: "play.fill")
-                        .font(.system(size: 24, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.9))
-                        .shadow(color: .black.opacity(0.3), radius: 4)
+                Image(systemName: "play.fill")
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.9))
+                    .shadow(color: .black.opacity(0.3), radius: 4)
+
+                // Bottom gradient + stats overlay
+                VStack(spacing: 0) {
+                    Spacer()
+                    LinearGradient(
+                        colors: [Color.black.opacity(0), Color.black.opacity(0.55)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: 44)
+                    .overlay(alignment: .bottom) {
+                        HStack(spacing: 8) {
+                            Label {
+                                Text(formatCount(highlight.views))
+                                    .font(.system(size: 11, weight: .bold))
+                            } icon: {
+                                Image(systemName: "play.fill")
+                                    .font(.system(size: 9, weight: .bold))
+                            }
+                            Spacer()
+                            Label {
+                                Text(formatCount(highlight.likes))
+                                    .font(.system(size: 11, weight: .bold))
+                            } icon: {
+                                Image(systemName: "heart.fill")
+                                    .font(.system(size: 9, weight: .bold))
+                            }
+                        }
+                        .labelStyle(.titleAndIcon)
+                        .foregroundColor(.white)
+                        .shadow(color: .black.opacity(0.5), radius: 2)
+                        .padding(.horizontal, 6)
+                        .padding(.bottom, 6)
+                    }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                
-                // Views count overlay
-                HStack(spacing: 4) {
-                    Image(systemName: "play.fill")
-                        .font(.system(size: 9, weight: .bold))
-                    Text(formatCount(highlight.views))
-                        .font(.system(size: 11, weight: .bold))
-                }
-                .foregroundColor(.white)
-                .shadow(color: .black.opacity(0.5), radius: 2)
-                .padding(6)
             }
             .frame(width: geometry.size.width, height: geometry.size.width * 1.5)
+            .clipped()
         }
         .aspectRatio(2/3, contentMode: .fit)
     }

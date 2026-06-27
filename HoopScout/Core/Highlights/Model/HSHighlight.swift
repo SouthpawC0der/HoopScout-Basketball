@@ -29,6 +29,9 @@ struct HSHighlight: Identifiable, Hashable {
     var views: Int
     /// Duration in seconds (max 90)
     let duration: TimeInterval
+    /// Author's `isPrivate` flag captured at upload time. Used to gate
+    /// visibility to followers + the author. Nil/false means public.
+    var authorIsPrivate: Bool?
     
     init(id: String = UUID().uuidString,
          authorId: String,
@@ -42,7 +45,8 @@ struct HSHighlight: Identifiable, Hashable {
          comments: Int = 0,
          reposts: Int = 0,
          views: Int = 0,
-         duration: TimeInterval) {
+         duration: TimeInterval,
+         authorIsPrivate: Bool? = nil) {
         self.id = id
         self.authorId = authorId
         self.authorName = authorName
@@ -56,6 +60,7 @@ struct HSHighlight: Identifiable, Hashable {
         self.reposts = reposts
         self.views = views
         self.duration = min(duration, 90) // Enforce 90 second max
+        self.authorIsPrivate = authorIsPrivate
     }
 }
 

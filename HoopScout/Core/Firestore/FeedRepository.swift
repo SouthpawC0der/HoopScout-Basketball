@@ -37,6 +37,7 @@ final class FeedRepository {
             "authorId": post.authorId,
             "authorName": author.name,
             "authorInitials": author.initials,
+            "authorIsPrivate": author.isPrivate ?? false,
             "body": post.body,
             "moodLabel": post.mood.label,
             "likes": post.likes,
@@ -44,6 +45,12 @@ final class FeedRepository {
             "createdAt": Timestamp(date: createdAt),
             "expiresAt": Timestamp(date: expiresAt)
         ]
+        // Only gym accounts can publish ads. Anything else gets stripped
+        // server-side via security rules; we also guard client-side here so
+        // a malicious build can't pre-stamp it.
+        if author.isGym, post.isAd == true {
+            data["isAd"] = true
+        }
         if let cityLabel, !cityLabel.isEmpty {
             data["cityLabel"] = cityLabel
         }
@@ -100,6 +107,8 @@ final class FeedRepository {
         let authorName = data["authorName"] as? String
         let authorInitials = data["authorInitials"] as? String
         let cityLabel = data["cityLabel"] as? String
+        let authorIsPrivate = data["authorIsPrivate"] as? Bool
+        let isAd = data["isAd"] as? Bool
 
         return HSFeedPost(
             id: doc.documentID,
@@ -114,7 +123,9 @@ final class FeedRepository {
             createdAt: createdAt,
             authorName: authorName,
             authorInitials: authorInitials,
-            cityLabel: cityLabel
+            cityLabel: cityLabel,
+            authorIsPrivate: authorIsPrivate,
+            isAd: isAd
         )
     }
 

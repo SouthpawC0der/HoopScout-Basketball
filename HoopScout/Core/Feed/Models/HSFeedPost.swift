@@ -27,6 +27,12 @@ struct HSFeedPost: Identifiable, Hashable {
     /// Reverse-geocoded "City, ST" stored alongside the post so the feed
     /// can scope to a local area.
     var cityLabel: String?
+    /// Author's `isPrivate` flag captured at post time. Used to gate
+    /// visibility to followers + the author. Nil/false means public.
+    var authorIsPrivate: Bool?
+    /// True for sponsored posts authored by gym/business accounts. Renders
+    /// an "AD" badge in the post card. Only gym accounts can set this.
+    var isAd: Bool?
 
     init(id: String,
          authorId: String,
@@ -40,7 +46,9 @@ struct HSFeedPost: Identifiable, Hashable {
          createdAt: Date? = nil,
          authorName: String? = nil,
          authorInitials: String? = nil,
-         cityLabel: String? = nil) {
+         cityLabel: String? = nil,
+         authorIsPrivate: Bool? = nil,
+         isAd: Bool? = nil) {
         self.id = id
         self.authorId = authorId
         self.time = time
@@ -54,6 +62,8 @@ struct HSFeedPost: Identifiable, Hashable {
         self.authorName = authorName
         self.authorInitials = authorInitials
         self.cityLabel = cityLabel
+        self.authorIsPrivate = authorIsPrivate
+        self.isAd = isAd
     }
 
     /// Posts older than 180 days are filtered out before display.
