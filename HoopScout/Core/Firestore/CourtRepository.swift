@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import Combine
 import FirebaseFirestore
 
 @MainActor
@@ -48,6 +49,18 @@ final class CourtRepository: ObservableObject {
             "maxCap": court.maxCap,
             "skill": court.skill,
             "type": court.type
+        ], merge: true)
+    }
+
+    // MARK: - Photo
+
+    /// Writes a user-uploaded photo URL onto the court doc. Last write wins —
+    /// abuse is handled by the report flow, not write contention.
+    func setPhotoURL(courtId: String, url: String, uploaderUID: String) async throws {
+        try await courts.document(courtId).setData([
+            "photoURL": url,
+            "photoUploaderUID": uploaderUID,
+            "photoUpdatedAt": FieldValue.serverTimestamp()
         ], merge: true)
     }
 
@@ -155,10 +168,13 @@ final class CourtRepository: ObservableObject {
         }
     }
 
-    /// Live snapshots of a court's active check-ins (filtered to non-expired).
-    func observeCheckIns(courtId: String) -> AsyncStream<[HSCheckInDoc]> {
+    /// Live snapshots of a court's active check-ins.
+    /// Bounded server-side by `expiresAt > now` and a hard cap on docs returned.
+    func observeCheckIns(courtId: String, limit: Int = 100) -> AsyncStream<[HSCheckInDoc]> {
         AsyncStream { continuation in
             let listener = courts.document(courtId).collection("checkIns")
+                .whereField("expiresAt", isGreaterThan: Timestamp(date: Date()))
+                .limit(to: limit)
                 .addSnapshotListener { snap, _ in
                     guard let snap else { continuation.yield([]); return }
                     let docs: [HSCheckInDoc] = snap.documents.compactMap {

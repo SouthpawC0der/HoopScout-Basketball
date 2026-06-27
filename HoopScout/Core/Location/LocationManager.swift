@@ -13,8 +13,13 @@ final class LocationManager: NSObject, ObservableObject {
     @Published private(set) var location: CLLocation?
     @Published private(set) var lastError: Error?
     @Published private(set) var lastVisit: CLVisit?
+    /// Reverse-geocoded "City, ST" of `location`. Updated as the user moves
+    /// more than ~1 km from the last geocoded fix.
+    @Published private(set) var cityLabel: String?
 
     private let manager = CLLocationManager()
+    private let geocoder = CLGeocoder()
+    private var lastGeocodedLocation: CLLocation?
 
     static let autoDetectKey = "hs_auto_detect_enabled"
 
@@ -64,13 +69,42 @@ final class LocationManager: NSObject, ObservableObject {
         UserDefaults.standard.set(false, forKey: Self.autoDetectKey)
         manager.stopMonitoringVisits()
     }
+
+    fileprivate func updateCityLabelIfNeeded(for loc: CLLocation) {
+        if let last = lastGeocodedLocation, loc.distance(from: last) < 1000 { return }
+        lastGeocodedLocation = loc
+        Task { [weak self] in
+            guard let self else { return }
+            if let placemark = try? await self.geocoder.reverseGeocodeLocation(loc).first {
+                let city = placemark.locality ?? placemark.subAdministrativeArea ?? ""
+                let state = placemark.administrativeArea ?? ""
+                let label: String
+                if !city.isEmpty && !state.isEmpty {
+                    label = "\(city), \(state)"
+                } else if !city.isEmpty {
+                    label = city
+                } else {
+                    label = state
+                }
+                if !label.isEmpty {
+                    await MainActor.run { self.cityLabel = label }
+                }
+            }
+        }
+    }
 }
 
 extension LocationManager: CLLocationManagerDelegate {
     nonisolated func locationManager(_ manager: CLLocationManager,
                                      didUpdateLocations locations: [CLLocation]) {
         guard let loc = locations.last else { return }
-        Task { @MainActor in self.location = loc }
+        Task { @MainActor in
+            self.location = loc
+            self.updateCityLabelIfNeeded(for: loc)
+            // Drive the dwell detector from here so auto-detect works on every
+            // screen, not just CourtsView (which only feeds it while visible).
+            CheckInService.shared.handleForegroundLocation(loc)
+        }
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager,

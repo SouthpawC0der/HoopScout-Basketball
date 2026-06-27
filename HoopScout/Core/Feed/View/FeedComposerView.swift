@@ -10,12 +10,12 @@ struct FeedComposerView: View {
 
     @EnvironmentObject private var auth: AuthService
     @Environment(\.dismiss) private var dismiss
-    @State private var body: String = ""
+    @State private var draft: String = ""
     @State private var mood: HSFeedPost.Mood?
     @FocusState private var focused: Bool
 
     private var canPost: Bool {
-        !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
@@ -103,7 +103,7 @@ struct FeedComposerView: View {
     }
 
     private var textArea: some View {
-        TextEditor(text: $body)
+        TextEditor(text: $draft)
             .focused($focused)
             .font(.system(size: 15))
             .scrollContentBackground(.hidden)
@@ -111,7 +111,7 @@ struct FeedComposerView: View {
             .frame(minHeight: 120)
             .padding(.top, 8)
             .overlay(alignment: .topLeading) {
-                if body.isEmpty {
+                if draft.isEmpty {
                     Text("Share a thought, a game, a feeling…")
                         .font(.system(size: 15))
                         .foregroundColor(HSColors.gray500)
@@ -194,11 +194,12 @@ struct FeedComposerView: View {
             authorId: auth.profile?.id ?? "me",
             time: "now",
             kind: .text,
-            body: body.trimmingCharacters(in: .whitespacesAndNewlines),
+            body: draft.trimmingCharacters(in: .whitespacesAndNewlines),
             mood: mood ?? HSFeedMock.composerMoods[0],
             likes: 0,
             comments: 0,
-            attachment: nil
+            attachment: nil,
+            createdAt: Date()
         )
     }
 }

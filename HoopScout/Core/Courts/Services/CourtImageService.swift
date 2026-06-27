@@ -98,11 +98,10 @@ final class CourtImageService {
 
     private func lookAroundSnapshot(coordinate: CLLocationCoordinate2D,
                                     size: CGSize, scale: CGFloat) async -> UIImage? {
-        let scene = MKLookAroundSceneRequest(coordinate: coordinate)
-        guard let result = try? await scene.scene else { return nil }
+        let request = MKLookAroundSceneRequest(coordinate: coordinate)
+        guard let result = try? await request.scene else { return nil }
         let options = MKLookAroundSnapshotter.Options()
         options.size = size
-        options.scale = scale
         let snapper = MKLookAroundSnapshotter(scene: result, options: options)
         guard let snapshot = try? await snapper.snapshot else { return nil }
         return snapshot.image

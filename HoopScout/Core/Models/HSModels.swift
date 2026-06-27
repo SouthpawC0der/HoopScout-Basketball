@@ -43,6 +43,8 @@ struct HSCourt: Identifiable, Hashable {
     var hasGame: Bool
     var gameInfo: String?
     var img: HSCourtImageVariant
+    var latitude: Double? = nil
+    var longitude: Double? = nil
 }
 
 enum HSCourtImageVariant: String, Hashable {

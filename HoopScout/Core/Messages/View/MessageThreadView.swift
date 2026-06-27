@@ -8,10 +8,19 @@ import SwiftUI
 struct MessageThreadView: View {
     let thread: HSThreadDoc
     @EnvironmentObject private var auth: AuthService
+    @EnvironmentObject private var blocks: BlockRepository
 
     @State private var messages: [HSMessageDoc] = []
     @State private var draft: String = ""
     @State private var observeTask: Task<Void, Never>?
+    @State private var showProfileConfirm = false
+    @State private var profileToShow: HSUserProfile?
+    @State private var isFetchingProfile = false
+    @State private var showDeleteConfirm = false
+    @State private var isDeleting = false
+    @State private var showReport = false
+    @State private var reportSubmitted = false
+    @State private var showBlockConfirm = false
     @Environment(\.dismiss) private var dismiss
 
     private var currentUid: String? { auth.profile?.id }
@@ -35,6 +44,69 @@ struct MessageThreadView: View {
             }
         }
         .onDisappear { observeTask?.cancel() }
+        .confirmationDialog(
+            "View \(other?.name ?? "this hooper")'s profile?",
+            isPresented: $showProfileConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("View Profile") { Task { await loadProfile() } }
+            Button("Cancel", role: .cancel) {}
+        }
+        .sheet(item: $profileToShow) { profile in
+            NavigationStack {
+                FriendProfileView(user: profile)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Close") { profileToShow = nil }
+                        }
+                    }
+            }
+        }
+        .alert("Delete this conversation?", isPresented: $showDeleteConfirm) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) { deleteThread() }
+        } message: {
+            Text("This permanently removes every message with \(other?.name ?? "this hooper").")
+        }
+        .sheet(isPresented: $showReport) {
+            if let reporterUid = currentUid, !otherUid.isEmpty {
+                ReportSheet(
+                    entity: .thread,
+                    entityId: threadId,
+                    reportedUid: otherUid,
+                    reporterUid: reporterUid,
+                    subjectLabel: "conversation",
+                    onSubmitted: { reportSubmitted = true }
+                )
+            }
+        }
+        .alert("Report submitted", isPresented: $reportSubmitted) {
+            Button("OK") {}
+        } message: {
+            Text("Thanks — we'll review this within 24 hours.")
+        }
+        .confirmationDialog(isOtherBlocked ? "Unblock \(other?.name ?? "this hooper")?" : "Block \(other?.name ?? "this hooper")?",
+                            isPresented: $showBlockConfirm,
+                            titleVisibility: .visible) {
+            if isOtherBlocked {
+                Button("Unblock") {
+                    Task { try? await BlockRepository.shared.unblock(otherUid) }
+                }
+            } else {
+                Button("Block", role: .destructive) {
+                    Task { try? await BlockRepository.shared.block(otherUid) }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(isOtherBlocked
+                ? "You'll see their messages again."
+                : "You won't see their posts, comments, or messages.")
+        }
+    }
+
+    private var isOtherBlocked: Bool {
+        !otherUid.isEmpty && blocks.isBlocked(otherUid)
     }
 
     private func subscribe() async {
@@ -57,19 +129,47 @@ struct MessageThreadView: View {
             }
             .buttonStyle(.plain)
 
-            HSAvatar(uid: otherUid, initials: other?.initials ?? "?", size: 38)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(other?.name ?? "Unknown")
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundColor(HSColors.gray900)
-                Text(presenceLabel)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(HSColors.gray500)
+            Button {
+                guard !otherUid.isEmpty else { return }
+                showProfileConfirm = true
+            } label: {
+                HStack(spacing: 10) {
+                    HSAvatar(uid: otherUid, initials: other?.initials ?? "?", size: 38)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(other?.name ?? "Unknown")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundColor(HSColors.gray900)
+                        Text(presenceLabel)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(HSColors.gray500)
+                    }
+                }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .disabled(isFetchingProfile)
 
             Spacer()
 
-            Button {} label: {
+            Menu {
+                Button(role: .destructive) {
+                    showReport = true
+                } label: {
+                    Label("Report Conversation", systemImage: "flag")
+                }
+                Button(role: .destructive) {
+                    showBlockConfirm = true
+                } label: {
+                    Label(isOtherBlocked ? "Unblock User" : "Block User",
+                          systemImage: isOtherBlocked ? "hand.raised.slash" : "hand.raised")
+                }
+                Divider()
+                Button(role: .destructive) {
+                    showDeleteConfirm = true
+                } label: {
+                    Label("Delete Conversation", systemImage: "trash")
+                }
+            } label: {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 14, weight: .bold))
                     .foregroundColor(HSColors.navy)
@@ -77,7 +177,6 @@ struct MessageThreadView: View {
                     .background(HSColors.gray100)
                     .clipShape(Circle())
             }
-            .buttonStyle(.plain)
         }
         .padding(.horizontal, 16)
         .padding(.top, 58).padding(.bottom, 12)
@@ -142,41 +241,64 @@ struct MessageThreadView: View {
         }
     }
 
+    @ViewBuilder
     private var composer: some View {
-        HStack(spacing: 8) {
-            Button {} label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundColor(HSColors.navy)
-                    .frame(width: 36, height: 36)
-                    .background(HSColors.gray100)
-                    .clipShape(Circle())
-            }
-            .buttonStyle(.plain)
-
-            HStack(spacing: 6) {
-                TextField("Message…", text: $draft, axis: .vertical)
-                    .lineLimit(1...4)
-                    .font(.system(size: 14))
-                    .foregroundColor(HSColors.gray900)
-                    .padding(.leading, 14)
-                Button(action: send) {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(.white)
-                        .frame(width: 28, height: 28)
-                        .background(draft.trimmingCharacters(in: .whitespaces).isEmpty ? HSColors.gray300 : HSColors.navy)
+        if isOtherBlocked {
+            blockedComposerBanner
+        } else {
+            HStack(spacing: 8) {
+                Button {} label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(HSColors.navy)
+                        .frame(width: 36, height: 36)
+                        .background(HSColors.gray100)
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
-                .padding(.trailing, 6)
+
+                HStack(spacing: 6) {
+                    TextField("Message…", text: $draft, axis: .vertical)
+                        .lineLimit(1...4)
+                        .font(.system(size: 14))
+                        .foregroundColor(HSColors.gray900)
+                        .padding(.leading, 14)
+                    Button(action: send) {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(.white)
+                            .frame(width: 28, height: 28)
+                            .background(draft.trimmingCharacters(in: .whitespaces).isEmpty ? HSColors.gray300 : HSColors.navy)
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .padding(.trailing, 6)
+                }
+                .frame(minHeight: 38)
+                .background(HSColors.gray100)
+                .clipShape(RoundedRectangle(cornerRadius: 19, style: .continuous))
             }
-            .frame(minHeight: 38)
-            .background(HSColors.gray100)
-            .clipShape(RoundedRectangle(cornerRadius: 19, style: .continuous))
+            .padding(.horizontal, 14).padding(.top, 10).padding(.bottom, 34)
+            .background(Color.white)
+            .overlay(
+                Rectangle().fill(HSColors.gray200).frame(height: 1),
+                alignment: .top
+            )
         }
-        .padding(.horizontal, 14).padding(.top, 10).padding(.bottom, 34)
+    }
+
+    private var blockedComposerBanner: some View {
+        VStack(spacing: 8) {
+            Text("You blocked \(other?.name ?? "this hooper").")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(HSColors.gray700)
+            Button("Unblock") { showBlockConfirm = true }
+                .font(.system(size: 13, weight: .bold))
+                .foregroundColor(HSColors.navy)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 34)
         .background(Color.white)
         .overlay(
             Rectangle().fill(HSColors.gray200).frame(height: 1),
@@ -191,6 +313,31 @@ struct MessageThreadView: View {
         Task {
             try? await MessageRepository.shared.send(
                 text: text, threadId: threadId, senderId: uid)
+        }
+    }
+
+    private func loadProfile() async {
+        guard !otherUid.isEmpty, !isFetchingProfile else { return }
+        isFetchingProfile = true
+        defer { isFetchingProfile = false }
+        if let profile = try? await UserRepository.shared.fetch(uid: otherUid) {
+            profileToShow = profile
+        }
+    }
+
+    private func deleteThread() {
+        guard !threadId.isEmpty, !isDeleting else { return }
+        isDeleting = true
+        Task {
+            do {
+                try await MessageRepository.shared.deleteThread(threadId: threadId)
+                await MainActor.run { dismiss() }
+            } catch {
+                #if DEBUG
+                print("deleteThread error:", error.localizedDescription)
+                #endif
+                await MainActor.run { isDeleting = false }
+            }
         }
     }
 }

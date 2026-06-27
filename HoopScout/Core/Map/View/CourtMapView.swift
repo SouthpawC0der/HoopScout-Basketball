@@ -108,10 +108,16 @@ struct CourtMapView: View {
     }
 
     private func bottomCard(_ court: HSCourt) -> some View {
-        Button { onOpenCourt(court) } label: {
+        let coord: CLLocationCoordinate2D? = {
+            guard let lat = court.latitude, let lon = court.longitude else { return nil }
+            return CLLocationCoordinate2D(latitude: lat, longitude: lon)
+        }()
+        return Button { onOpenCourt(court) } label: {
             HStack(spacing: 12) {
-                HSCourtImage(variant: court.img, height: 66, cornerRadius: 12)
+                CourtSnapshotImage(coordinate: coord, height: 66,
+                                   cornerRadius: 12, fallback: court.img)
                     .frame(width: 66, height: 66)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
                 VStack(alignment: .leading, spacing: 1) {
                     let live = liveCounts.counts[courtRepo.stableId(for: court)] ?? court.playing

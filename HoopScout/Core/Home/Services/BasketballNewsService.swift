@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import Combine
 import SwiftUI
 
 @MainActor
@@ -72,7 +73,8 @@ final class BasketballNewsService: ObservableObject {
             time: time,
             icon: icon,
             tint: tint,
-            url: item.link
+            url: item.link,
+            imageURL: item.imageURL
         )
     }
 
@@ -95,6 +97,7 @@ struct RSSItem {
     let link: URL
     let description: String
     let pubDate: Date?
+    let imageURL: URL?
 }
 
 // MARK: - RSS XML parser
@@ -108,6 +111,7 @@ private final class RSSParser: NSObject, XMLParserDelegate {
     private var currentLink = ""
     private var currentDescription = ""
     private var currentPubDate = ""
+    private var currentImageURL: String = ""
 
     private static let dateFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -135,6 +139,28 @@ private final class RSSParser: NSObject, XMLParserDelegate {
             currentLink = ""
             currentDescription = ""
             currentPubDate = ""
+            currentImageURL = ""
+        } else if inItem, currentImageURL.isEmpty {
+            // ESPN feeds expose images via <media:thumbnail url="…"/>,
+            // <media:content url="…" medium="image"/>, or <enclosure url="…" type="image/…"/>.
+            switch elementName {
+            case "media:thumbnail", "media:content":
+                if let url = attributeDict["url"] {
+                    let medium = attributeDict["medium"] ?? ""
+                    let type = attributeDict["type"] ?? ""
+                    if medium.isEmpty || medium == "image" ||
+                        type.hasPrefix("image") || type.isEmpty {
+                        currentImageURL = url
+                    }
+                }
+            case "enclosure":
+                if let url = attributeDict["url"],
+                   (attributeDict["type"] ?? "").hasPrefix("image") {
+                    currentImageURL = url
+                }
+            default:
+                break
+            }
         }
     }
 
@@ -174,10 +200,14 @@ private final class RSSParser: NSObject, XMLParserDelegate {
                 let date = Self.dateFormatter.date(
                     from: currentPubDate.trimmingCharacters(in: .whitespacesAndNewlines)
                 )
+                let image = URL(
+                    string: currentImageURL.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
                 items.append(RSSItem(title: trimmedTitle,
                                      link: url,
                                      description: desc,
-                                     pubDate: date))
+                                     pubDate: date,
+                                     imageURL: image))
             }
         }
         currentElement = ""

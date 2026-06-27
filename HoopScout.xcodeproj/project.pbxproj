@@ -6,13 +6,38 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		2E3D7F412FBF863D007A3534 /* FirebaseAnalytics in Frameworks */ = {isa = PBXBuildFile; productRef = 2E3D7F402FBF863D007A3534 /* FirebaseAnalytics */; };
+		2E3D7F432FBF863D007A3534 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 2E3D7F422FBF863D007A3534 /* FirebaseAuth */; };
+		2E3D7F452FBF863D007A3534 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = 2E3D7F442FBF863D007A3534 /* FirebaseFirestore */; };
+		2E3D7F472FBF863D007A3534 /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = 2E3D7F462FBF863D007A3534 /* FirebaseMessaging */; };
+		2E7733012FD71C4F00916164 /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = 2E7733002FD71C4F00916164 /* FirebaseStorage */; };
+		2EF9CA872FD0F3B00078F28C /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 2EF9CA862FD0F3B00078F28C /* PrivacyInfo.xcprivacy */; };
+		2EF9CA8B2FD233020078F28C /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 2EF9CA8A2FD233020078F28C /* GoogleSignIn */; };
+		2EF9CA8D2FD233020078F28C /* GoogleSignInSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 2EF9CA8C2FD233020078F28C /* GoogleSignInSwift */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		2E0FA8E52F97E95300F41400 /* HoopScout.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HoopScout.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		2EF9CA862FD0F3B00078F28C /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		2E5F293C2FD069F100A38D0E /* Exceptions for "HoopScout" folder in "HoopScout" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 2E0FA8E42F97E95300F41400 /* HoopScout */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		2E0FA8E72F97E95300F41400 /* HoopScout */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				2E5F293C2FD069F100A38D0E /* Exceptions for "HoopScout" folder in "HoopScout" target */,
+			);
 			path = HoopScout;
 			sourceTree = "<group>";
 		};
@@ -23,6 +48,13 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				2EF9CA8B2FD233020078F28C /* GoogleSignIn in Frameworks */,
+				2E3D7F472FBF863D007A3534 /* FirebaseMessaging in Frameworks */,
+				2E3D7F412FBF863D007A3534 /* FirebaseAnalytics in Frameworks */,
+				2EF9CA8D2FD233020078F28C /* GoogleSignInSwift in Frameworks */,
+				2E7733012FD71C4F00916164 /* FirebaseStorage in Frameworks */,
+				2E3D7F432FBF863D007A3534 /* FirebaseAuth in Frameworks */,
+				2E3D7F452FBF863D007A3534 /* FirebaseFirestore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -34,6 +66,8 @@
 			children = (
 				2E0FA8E72F97E95300F41400 /* HoopScout */,
 				2E0FA8E62F97E95300F41400 /* Products */,
+				2EF9CA862FD0F3B00078F28C /* PrivacyInfo.xcprivacy */,
+				2E7732FF2FD71C4F00916164 /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
@@ -43,6 +77,13 @@
 				2E0FA8E52F97E95300F41400 /* HoopScout.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		2E7732FF2FD71C4F00916164 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -65,6 +106,13 @@
 			);
 			name = HoopScout;
 			packageProductDependencies = (
+				2E3D7F402FBF863D007A3534 /* FirebaseAnalytics */,
+				2E3D7F422FBF863D007A3534 /* FirebaseAuth */,
+				2E3D7F442FBF863D007A3534 /* FirebaseFirestore */,
+				2E3D7F462FBF863D007A3534 /* FirebaseMessaging */,
+				2EF9CA8A2FD233020078F28C /* GoogleSignIn */,
+				2EF9CA8C2FD233020078F28C /* GoogleSignInSwift */,
+				2E7733002FD71C4F00916164 /* FirebaseStorage */,
 			);
 			productName = HoopScout;
 			productReference = 2E0FA8E52F97E95300F41400 /* HoopScout.app */;
@@ -94,6 +142,10 @@
 			);
 			mainGroup = 2E0FA8DC2F97E95300F41400;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				2E3D7F3F2FBF863C007A3534 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+				2EF9CA892FD233020078F28C /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 2E0FA8E62F97E95300F41400 /* Products */;
 			projectDirPath = "";
@@ -109,6 +161,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				2EF9CA872FD0F3B00078F28C /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -251,11 +304,15 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = HoopScout/HoopScout.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 967NW2ZAKS;
+				DEVELOPMENT_TEAM = M2D6G2FS4P;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = HoopScout/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = HoopScout;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.sports";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -272,6 +329,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -283,11 +341,15 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "HoopScout/HoopScout-Release.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 967NW2ZAKS;
+				DEVELOPMENT_TEAM = M2D6G2FS4P;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = HoopScout/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = HoopScout;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.sports";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -304,6 +366,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -332,6 +395,63 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		2E3D7F3F2FBF863C007A3534 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 12.13.0;
+			};
+		};
+		2EF9CA892FD233020078F28C /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/google/GoogleSignIn-iOS";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 9.1.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		2E3D7F402FBF863D007A3534 /* FirebaseAnalytics */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 2E3D7F3F2FBF863C007A3534 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAnalytics;
+		};
+		2E3D7F422FBF863D007A3534 /* FirebaseAuth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 2E3D7F3F2FBF863C007A3534 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAuth;
+		};
+		2E3D7F442FBF863D007A3534 /* FirebaseFirestore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 2E3D7F3F2FBF863C007A3534 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFirestore;
+		};
+		2E3D7F462FBF863D007A3534 /* FirebaseMessaging */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 2E3D7F3F2FBF863C007A3534 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseMessaging;
+		};
+		2E7733002FD71C4F00916164 /* FirebaseStorage */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 2E3D7F3F2FBF863C007A3534 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseStorage;
+		};
+		2EF9CA8A2FD233020078F28C /* GoogleSignIn */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 2EF9CA892FD233020078F28C /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
+			productName = GoogleSignIn;
+		};
+		2EF9CA8C2FD233020078F28C /* GoogleSignInSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 2EF9CA892FD233020078F28C /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
+			productName = GoogleSignInSwift;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 2E0FA8DD2F97E95300F41400 /* Project object */;
 }

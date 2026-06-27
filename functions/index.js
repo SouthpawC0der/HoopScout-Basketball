@@ -1,13 +1,89 @@
 // HoopScout — Cloud Functions
 // Fan-out new chat messages as APNs/FCM pushes.
 
-const { onDocumentCreated } = require("firebase-functions/v2/firestore");
+const { onDocumentCreated, onDocumentUpdated, onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { initializeApp } = require("firebase-admin/app");
-const { getFirestore } = require("firebase-admin/firestore");
+const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 const { getMessaging } = require("firebase-admin/messaging");
 const { logger } = require("firebase-functions");
 
 initializeApp();
+
+function computeInitials(name) {
+  if (!name) return "?";
+  const parts = name.trim().split(/\s+/);
+  const first = parts[0] && parts[0][0] ? parts[0][0] : "";
+  const last = parts.length > 1 && parts[1][0] ? parts[1][0] : "";
+  const combined = (first + last).toUpperCase();
+  return combined || "?";
+}
+
+// Triggered when a user tombstones their account (deletedAt first appears).
+// Removes the followers/following/blocked subcollections that the client
+// deletes best-effort — required for Apple App Store Guideline 5.1.1(v).
+exports.cleanupDeletedUser = onDocumentUpdated(
+  "users/{uid}",
+  async (event) => {
+    const before = event.data.before.data() || {};
+    const after  = event.data.after.data()  || {};
+
+    // Only run on the initial tombstone write; skip subsequent updates.
+    if (before.deletedAt != null || after.deletedAt == null) return;
+
+    const { uid } = event.params;
+    const db = getFirestore();
+
+    await Promise.all(
+      ["followers", "following", "blocked"].map((sub) =>
+        db.recursiveDelete(db.collection("users").doc(uid).collection(sub))
+      )
+    );
+
+    logger.info("cleanupDeletedUser: subcollections removed", { uid });
+  }
+);
+
+// Fan-out a follow: mirror to followers + update counters on both sides.
+exports.onFollowChange = onDocumentWritten(
+  "users/{followerUid}/following/{targetUid}",
+  async (event) => {
+    const { followerUid, targetUid } = event.params;
+    if (followerUid === targetUid) return;
+
+    const db = getFirestore();
+    const before = event.data && event.data.before && event.data.before.exists;
+    const after = event.data && event.data.after && event.data.after.exists;
+
+    if (!before && after) {
+      // New follow.
+      const followerSnap = await db.doc(`users/${followerUid}`).get();
+      const follower = followerSnap.data() || {};
+      const name = follower.name || "Someone";
+      const initials = computeInitials(name);
+
+      const batch = db.batch();
+      batch.set(db.doc(`users/${targetUid}/followers/${followerUid}`), {
+        name,
+        initials,
+        since: FieldValue.serverTimestamp(),
+      });
+      batch.set(db.doc(`users/${followerUid}`),
+        { followingCount: FieldValue.increment(1) }, { merge: true });
+      batch.set(db.doc(`users/${targetUid}`),
+        { followersCount: FieldValue.increment(1) }, { merge: true });
+      await batch.commit();
+    } else if (before && !after) {
+      // Unfollow.
+      const batch = db.batch();
+      batch.delete(db.doc(`users/${targetUid}/followers/${followerUid}`));
+      batch.set(db.doc(`users/${followerUid}`),
+        { followingCount: FieldValue.increment(-1) }, { merge: true });
+      batch.set(db.doc(`users/${targetUid}`),
+        { followersCount: FieldValue.increment(-1) }, { merge: true });
+      await batch.commit();
+    }
+  }
+);
 
 exports.sendMessageNotification = onDocumentCreated(
   "threads/{threadId}/messages/{messageId}",

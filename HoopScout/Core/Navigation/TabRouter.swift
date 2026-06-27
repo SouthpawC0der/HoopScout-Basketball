@@ -13,7 +13,9 @@ import Combine
 final class TabRouter: ObservableObject {
     @Published var selectedTab: Int = 0
 
-    static let courts = 0
-    static let messages = 1
-    static let profile = 2
+    static let home = 0
+    static let courts = 1
+    static let feed = 2
+    static let messages = 3
+    static let profile = 4
 }

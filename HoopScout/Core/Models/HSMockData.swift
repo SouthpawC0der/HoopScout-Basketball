@@ -43,39 +43,46 @@ enum HSMockData {
                 skill: "Competitive", type: "Outdoor · Full",
                 address: "3 6th Ave, New York, NY", tags: ["local", "popular"],
                 friendsHere: ["f1", "f4", "f6"], hasGame: true,
-                gameInfo: "5v5 run · starts in 22 min", img: .hero1),
+                gameInfo: "5v5 run · starts in 22 min", img: .hero1,
+                latitude: 40.7311, longitude: -74.0007),
         HSCourt(id: "c2", name: "Rucker Park", subtitle: "Holcombe Rucker",
                 distance: 2.4, rating: 4.9, reviews: 2871, playing: 32, maxCap: 40,
                 skill: "Competitive", type: "Outdoor · 2 Full",
                 address: "155th St & Frederick Douglass Blvd", tags: ["popular"],
-                friendsHere: [], hasGame: false, gameInfo: nil, img: .hero2),
+                friendsHere: [], hasGame: false, gameInfo: nil, img: .hero2,
+                latitude: 40.8295, longitude: -73.9407),
         HSCourt(id: "c3", name: "Chelsea Piers Fieldhouse", subtitle: "Indoor · $15 drop-in",
                 distance: 3.1, rating: 4.6, reviews: 412, playing: 11, maxCap: 20,
                 skill: "Casual", type: "Indoor · Full",
                 address: "Pier 62, 23rd St", tags: ["gyms", "popular"],
                 friendsHere: ["f2"], hasGame: true,
-                gameInfo: "Open run · now", img: .hero3),
+                gameInfo: "Open run · now", img: .hero3,
+                latitude: 40.7466, longitude: -74.0091),
         HSCourt(id: "c4", name: "Tompkins Square Park", subtitle: nil,
                 distance: 1.2, rating: 4.2, reviews: 189, playing: 6, maxCap: 16,
                 skill: "Casual", type: "Outdoor · Half",
                 address: "500 E 9th St", tags: ["local"],
-                friendsHere: ["f5"], hasGame: false, gameInfo: nil, img: .hero4),
+                friendsHere: ["f5"], hasGame: false, gameInfo: nil, img: .hero4,
+                latitude: 40.7264, longitude: -73.9819),
         HSCourt(id: "c5", name: "Dyckman Courts", subtitle: "Monsignor Kett",
                 distance: 8.7, rating: 4.7, reviews: 934, playing: 24, maxCap: 32,
                 skill: "Competitive", type: "Outdoor · Full",
                 address: "204th St & Nagle Ave", tags: ["popular"],
                 friendsHere: ["f3"], hasGame: true,
-                gameInfo: "Tournament · 7 PM", img: .hero5),
+                gameInfo: "Tournament · 7 PM", img: .hero5,
+                latitude: 40.8669, longitude: -73.9242),
         HSCourt(id: "c6", name: "Life Time Sky", subtitle: "Members + guest",
                 distance: 4.3, rating: 4.4, reviews: 267, playing: 8, maxCap: 16,
                 skill: "Casual", type: "Indoor · Full",
                 address: "1 Water St", tags: ["gyms"],
-                friendsHere: [], hasGame: false, gameInfo: nil, img: .hero6),
+                friendsHere: [], hasGame: false, gameInfo: nil, img: .hero6,
+                latitude: 40.7041, longitude: -74.0079),
         HSCourt(id: "c7", name: "Pier 2 Courts", subtitle: "Brooklyn Bridge Park",
                 distance: 2.9, rating: 4.5, reviews: 521, playing: 14, maxCap: 24,
                 skill: "Casual", type: "Outdoor · 2 Full",
                 address: "Furman St & Pier 2", tags: ["local", "popular"],
-                friendsHere: ["f1", "f5"], hasGame: false, gameInfo: nil, img: .hero7)
+                friendsHere: ["f1", "f5"], hasGame: false, gameInfo: nil, img: .hero7,
+                latitude: 40.7016, longitude: -73.9978)
     ]
 
     static let threads: [HSThread] = [
@@ -113,5 +120,23 @@ enum HSMockData {
 
     static func court(id: String) -> HSCourt? {
         courts.first { $0.id == id }
+    }
+
+    /// Builds a navigable HSUserProfile for a mock friend so the rest of the
+    /// app can route to FriendProfileView. The Firestore refresh on appear
+    /// will overwrite this with the real doc if one exists.
+    static func userProfile(forFriendId id: String) -> HSUserProfile? {
+        guard let f = friend(id: id) else { return nil }
+        return HSUserProfile(
+            id: f.id,
+            name: f.name,
+            handle: "",
+            location: "",
+            bio: "",
+            skill: f.skill,
+            runs: 0,
+            followers: 0,
+            following: 0
+        )
     }
 }

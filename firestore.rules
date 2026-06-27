@@ -31,15 +31,30 @@ service cloud.firestore {
         && isString(request.resource.data.bio, 0, 500)
         && isString(request.resource.data.skill, 0, 30);
 
-      // Owner can update profile fields; the Cloud Function (Admin SDK) may
-      // freely update counts since it bypasses rules.
-      allow update: if isSelf(uid)
-        && (!('name' in request.resource.data) || isString(request.resource.data.name, 1, 80))
-        && (!('handle' in request.resource.data) || isString(request.resource.data.handle, 0, 50))
-        && (!('location' in request.resource.data) || isString(request.resource.data.location, 0, 80))
-        && (!('bio' in request.resource.data) || isString(request.resource.data.bio, 0, 500))
-        && (!('skill' in request.resource.data) || isString(request.resource.data.skill, 0, 30))
-        && (!('fcmToken' in request.resource.data) || isString(request.resource.data.fcmToken, 0, 1024));
+      // Owner can update any field (subject to per-field validation below).
+      // Any other signed-in user may *only* touch aggregate counters used
+      // by the client-side follow/rating mirror. Field-level validation
+      // checks the diff (affectedKeys) rather than the full post-merge
+      // document — otherwise pre-existing fields like `name` cause every
+      // non-owner write to fail, since they're present in
+      // request.resource.data even when not being modified.
+      allow update: if isSignedIn()
+        && (
+          isSelf(uid)
+          || request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['followersCount', 'followingCount',
+                        'ratingAverage', 'ratingCount'])
+        )
+        && (!('name' in request.resource.data.diff(resource.data).affectedKeys()) || (isSelf(uid) && isString(request.resource.data.name, 1, 80)))
+        && (!('handle' in request.resource.data.diff(resource.data).affectedKeys()) || (isSelf(uid) && isString(request.resource.data.handle, 0, 50)))
+        && (!('location' in request.resource.data.diff(resource.data).affectedKeys()) || (isSelf(uid) && isString(request.resource.data.location, 0, 80)))
+        && (!('bio' in request.resource.data.diff(resource.data).affectedKeys()) || (isSelf(uid) && isString(request.resource.data.bio, 0, 500)))
+        && (!('skill' in request.resource.data.diff(resource.data).affectedKeys()) || (isSelf(uid) && isString(request.resource.data.skill, 0, 30)))
+        && (!('fcmToken' in request.resource.data.diff(resource.data).affectedKeys()) || (isSelf(uid) && isString(request.resource.data.fcmToken, 0, 1024)))
+        && (!('photoURL' in request.resource.data.diff(resource.data).affectedKeys()) || (isSelf(uid) && isString(request.resource.data.photoURL, 0, 2048)))
+        && (!('position' in request.resource.data.diff(resource.data).affectedKeys()) || (isSelf(uid) && isString(request.resource.data.position, 0, 40)))
+        && (!('education' in request.resource.data.diff(resource.data).affectedKeys()) || (isSelf(uid) && isString(request.resource.data.education, 0, 40)))
+        && (!('tosAcceptedAt' in request.resource.data.diff(resource.data).affectedKeys()) || isSelf(uid));
 
       allow delete: if isSelf(uid);
 
@@ -55,9 +70,75 @@ service cloud.firestore {
       }
 
       // ---- users/{uid}/followers/{followerUid} ----
+      // Mirrored client-side: the *follower* writes/deletes their own entry
+      // on the target's followers subcollection. The target user cannot.
       match /followers/{followerUid} {
         allow read: if isSignedIn();
-        allow write: if false; // Server-only (Cloud Function via Admin SDK)
+        allow create: if isSelf(followerUid)
+          && followerUid != uid
+          && isString(request.resource.data.name, 1, 80)
+          && isString(request.resource.data.initials, 1, 4);
+        allow delete: if isSelf(followerUid);
+        allow update: if false;
+      }
+
+      // ---- users/{uid}/runs/{runId} ----
+      // Only the owner can read/write their own run history.
+      match /runs/{runId} {
+        allow read: if isSelf(uid);
+        allow create: if isSelf(uid)
+          && isString(request.resource.data.courtId, 1, 200)
+          && isString(request.resource.data.courtName, 1, 200)
+          && request.resource.data.durationMinutes is int
+          && request.resource.data.durationMinutes >= 0
+          && request.resource.data.durationMinutes <= 24 * 60;
+        allow update, delete: if isSelf(uid);
+      }
+
+      // ---- users/{uid}/notifications/{notificationId} ----
+      // Personal inbox. The owner has full control. Any other signed-in
+      // user may *create* a notification in this inbox (e.g. when they
+      // follow this user), but cannot read or modify existing entries.
+      match /notifications/{notificationId} {
+        allow read, update, delete: if isSelf(uid);
+        allow create: if isSelf(uid)
+          || (isSignedIn()
+              && isString(request.resource.data.type, 1, 40)
+              && isString(request.resource.data.title, 1, 200)
+              && isString(request.resource.data.body, 0, 500));
+      }
+
+      // ---- users/{uid}/ratings/{raterUid} ----
+      // Any signed-in user can leave/update their own rating doc on another
+      // user. Aggregate fields on the parent user doc are updated in the
+      // same client transaction (covered by the users/update rule above).
+      match /ratings/{raterUid} {
+        allow read: if isSignedIn();
+        allow create, update: if isSelf(raterUid)
+          && raterUid != uid
+          && request.resource.data.raterUid == raterUid
+          && request.resource.data.ratedUid == uid
+          && request.resource.data.stars is int
+          && request.resource.data.stars >= 1
+          && request.resource.data.stars <= 5
+          && (!('comment' in request.resource.data) || isString(request.resource.data.comment, 0, 1000))
+          && (!('ballHandling' in request.resource.data)
+              || (request.resource.data.ballHandling is int
+                  && request.resource.data.ballHandling >= 1
+                  && request.resource.data.ballHandling <= 5))
+          && (!('basketballIQ' in request.resource.data)
+              || (request.resource.data.basketballIQ is int
+                  && request.resource.data.basketballIQ >= 1
+                  && request.resource.data.basketballIQ <= 5))
+          && (!('teamPlay' in request.resource.data)
+              || (request.resource.data.teamPlay is int
+                  && request.resource.data.teamPlay >= 1
+                  && request.resource.data.teamPlay <= 5))
+          && (!('toughness' in request.resource.data)
+              || (request.resource.data.toughness is int
+                  && request.resource.data.toughness >= 1
+                  && request.resource.data.toughness <= 5));
+        allow delete: if isSelf(raterUid);
       }
     }
 
@@ -70,7 +151,7 @@ service cloud.firestore {
       allow create: if isSignedIn()
         && request.resource.data.keys().hasOnly(
           ['name', 'address', 'lat', 'lon', 'maxCap', 'skill', 'type',
-           'playingCount', 'updatedAt'])
+           'playingCount', 'updatedAt', 'ratingAverage', 'ratingCount'])
         && isString(request.resource.data.name, 1, 120)
         && isString(request.resource.data.address, 0, 200)
         && request.resource.data.lat is number
@@ -81,7 +162,8 @@ service cloud.firestore {
       allow update: if isSignedIn()
         && request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(['playingCount', 'updatedAt', 'name', 'address',
-                      'lat', 'lon', 'maxCap', 'skill', 'type'])
+                      'lat', 'lon', 'maxCap', 'skill', 'type',
+                      'ratingAverage', 'ratingCount'])
         && (
           !('playingCount' in request.resource.data.diff(resource.data).affectedKeys())
           || (request.resource.data.playingCount == (resource.data.get('playingCount', 0) + 1)
@@ -98,6 +180,18 @@ service cloud.firestore {
           && isString(request.resource.data.displayName, 1, 80)
           && isString(request.resource.data.initials, 1, 4);
         allow delete: if isSelf(uid);
+      }
+
+      // ---- courts/{courtId}/ratings/{raterUid} ----
+      match /ratings/{raterUid} {
+        allow read: if isSignedIn();
+        allow create, update: if isSelf(raterUid)
+          && request.resource.data.raterUid == raterUid
+          && request.resource.data.courtId == courtId
+          && request.resource.data.stars is int
+          && request.resource.data.stars >= 1
+          && request.resource.data.stars <= 5;
+        allow delete: if isSelf(raterUid);
       }
     }
 

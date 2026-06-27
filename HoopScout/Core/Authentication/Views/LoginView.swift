@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import AuthenticationServices
 
 struct LoginView: View {
     @EnvironmentObject private var auth: AuthService
@@ -45,6 +46,9 @@ struct LoginView: View {
 
                     fields
                     cta
+                    orDivider
+                    appleSignIn
+                    googleSignIn
                     switcher
                     if mode == .signIn { forgotPassword }
                     if let err = auth.errorMessage {
@@ -147,6 +151,78 @@ struct LoginView: View {
         }
         .font(.system(size: 13, weight: .semibold))
         .foregroundColor(.white.opacity(0.7))
+    }
+
+    private var orDivider: some View {
+        HStack(spacing: 10) {
+            Rectangle().fill(Color.white.opacity(0.15)).frame(height: 1)
+            Text("OR").font(.system(size: 11, weight: .bold)).kerning(1.5)
+                .foregroundColor(.white.opacity(0.45))
+            Rectangle().fill(Color.white.opacity(0.15)).frame(height: 1)
+        }
+        .padding(.top, 6)
+    }
+
+    private var googleSignIn: some View {
+        Button {
+            Task { await auth.signInWithGoogle() }
+        } label: {
+            HStack(spacing: 10) {
+                googleGlyph
+                Text("Sign in with Google")
+                    .font(.system(size: 16, weight: .semibold))
+                    .kerning(-0.2)
+                    .foregroundColor(Color(red: 0.137, green: 0.157, blue: 0.180))
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 54)
+            .background(Color.white)
+            .clipShape(Capsule())
+            .overlay(Capsule().stroke(Color.black.opacity(0.08), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .disabled(auth.isLoading)
+        .opacity(auth.isLoading ? 0.6 : 1)
+    }
+
+    /// Multi-color Google "G" mark drawn with shapes (no asset needed).
+    private var googleGlyph: some View {
+        ZStack {
+            Image(systemName: "g.circle.fill")
+                .resizable()
+                .frame(width: 20, height: 20)
+                .foregroundStyle(
+                    LinearGradient(colors: [
+                        Color(red: 0.918, green: 0.263, blue: 0.208),
+                        Color(red: 0.984, green: 0.737, blue: 0.020),
+                        Color(red: 0.204, green: 0.659, blue: 0.325),
+                        Color(red: 0.259, green: 0.522, blue: 0.957)
+                    ], startPoint: .topLeading, endPoint: .bottomTrailing)
+                )
+        }
+    }
+
+    private var appleSignIn: some View {
+        SignInWithAppleButton(
+            onRequest: { request in
+                let nonce = auth.prepareAppleNonce()
+                request.requestedScopes = [.fullName, .email]
+                request.nonce = nonce
+            },
+            onCompletion: { result in
+                switch result {
+                case .success(let authResult):
+                    if let credential = authResult.credential as? ASAuthorizationAppleIDCredential {
+                        Task { await auth.completeSignInWithApple(credential: credential) }
+                    }
+                case .failure(let error):
+                    auth.failSignInWithApple(error)
+                }
+            }
+        )
+        .signInWithAppleButtonStyle(.white)
+        .frame(height: 54)
+        .clipShape(Capsule())
     }
 }
 

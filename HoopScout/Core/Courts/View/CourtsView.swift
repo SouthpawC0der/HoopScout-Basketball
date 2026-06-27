@@ -7,8 +7,13 @@ import SwiftUI
 import CoreLocation
 
 struct CourtsView: View {
+    @EnvironmentObject private var auth: AuthService
     @EnvironmentObject private var location: LocationManager
     @EnvironmentObject private var courtSearch: CourtSearchService
+    @EnvironmentObject private var checkIn: CheckInService
+    @EnvironmentObject private var courtRepo: CourtRepository
+    @EnvironmentObject private var notifications: NotificationRepository
+    @StateObject private var liveCounts = CourtLiveCountStore()
 
     @State private var filter: String = "all"
     @State private var query: String = ""
@@ -16,18 +21,19 @@ struct CourtsView: View {
     @State private var showFilterSheet = false
     @State private var selectedCourt: HSCourt?
     @State private var showMap = false
+    @State private var showNotifications = false
 
     private var usingRealSearch: Bool {
         !courtSearch.courts.isEmpty || courtSearch.isLoading
     }
 
     private var displayedCourts: [HSCourt] {
-        let source = usingRealSearch ? courtSearch.courts : HSMockData.courts
-        return source.filter { c in
+        // Don't fall back to mock data while we wait on the user's location.
+        // It would show NY courts to someone in Charlotte. Only show
+        // results once we have a real server search underway.
+        guard usingRealSearch else { return [] }
+        return courtSearch.courts.filter { c in
             if filter != "all" && !c.tags.contains(filter) { return false }
-            if !query.isEmpty,
-               !c.name.localizedCaseInsensitiveContains(query),
-               !c.address.localizedCaseInsensitiveContains(query) { return false }
             return true
         }
     }
@@ -39,6 +45,7 @@ struct CourtsView: View {
             ScrollView {
                 LazyVStack(spacing: 14, pinnedViews: []) {
                     header
+                    checkInBanner
                     searchAndFilter
                     chips
                     countLine
@@ -54,17 +61,25 @@ struct CourtsView: View {
                             .padding(.horizontal, 16)
                     }
                     ForEach(displayedCourts) { c in
-                        CourtCard(court: c) { selectedCourt = c }
+                        CourtCard(court: c,
+                                  liveCount: liveCounts.counts[courtRepo.stableId(for: c)],
+                                  liveRating: liveCounts.ratings[courtRepo.stableId(for: c)]) {
+                            selectedCourt = c
+                        }
                     }
                     if displayedCourts.isEmpty && !courtSearch.isLoading {
-                        Text("No courts match that. Try clearing filters.")
+                        emptyStateText
                             .font(.system(size: 14))
                             .foregroundColor(HSColors.gray500)
+                            .multilineTextAlignment(.center)
                             .padding(40)
                     }
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 100)
+            }
+            .refreshable {
+                await refreshCourts()
             }
         }
         .sheet(isPresented: $showFilterSheet) {
@@ -80,16 +95,55 @@ struct CourtsView: View {
                 selectedCourt = court
             }
         }
+        .sheet(isPresented: $showNotifications) {
+            NotificationsView()
+        }
         .task {
             if !location.isAuthorized {
                 location.requestPermission()
             } else {
                 location.startUpdates()
             }
+            // If a location fix already exists when the tab opens (common when
+            // the user came from another tab), kick off an initial search so
+            // the list isn't empty until they pull to refresh. Subsequent
+            // refreshes still happen via pull-to-refresh.
+            if courtSearch.courts.isEmpty, !courtSearch.isLoading,
+               query.isEmpty,
+               let coord = location.location?.coordinate {
+                await courtSearch.search(near: coord)
+            }
         }
         .onChange(of: location.location) { _, newLoc in
-            guard let newLoc, query.isEmpty else { return }
-            Task { await courtSearch.search(near: newLoc.coordinate) }
+            guard let newLoc else { return }
+            // Feed the dwell detector with every fresh fix.
+            let allCourts = (courtSearch.courts.isEmpty ? HSMockData.courts : courtSearch.courts)
+                + HSMockData.courts
+            checkIn.handle(location: newLoc, courts: allCourts, profile: auth.profile)
+            // First-fix search: if the tab opened before a location was
+            // available, trigger one search when the first fix arrives so the
+            // list isn't empty. After that, refreshes are pull-to-refresh.
+            if query.isEmpty, courtSearch.courts.isEmpty, !courtSearch.isLoading {
+                Task { await courtSearch.search(near: newLoc.coordinate) }
+            }
+        }
+        .onChange(of: courtSearch.courts) { _, newCourts in
+            // Snapshot the discovered courts so background CLVisit handling
+            // can match a coordinate to a court without the foreground service running.
+            CourtCache.shared.save(newCourts)
+        }
+        .onChange(of: displayedCourts.map { courtRepo.stableId(for: $0) }) { _, ids in
+            liveCounts.subscribe(courtIds: Set(ids))
+        }
+        .onChange(of: liveCounts.counts) { _, newCounts in
+            NearbyAlertService.shared.evaluate(
+                courts: displayedCourts,
+                liveCounts: newCounts,
+                userLocation: location.location,
+                courtRepo: courtRepo)
+        }
+        .onAppear {
+            liveCounts.subscribe(courtIds: Set(displayedCourts.map { courtRepo.stableId(for: $0) }))
         }
         .onChange(of: query) { _, newValue in
             debounceTask?.cancel()
@@ -97,22 +151,129 @@ struct CourtsView: View {
             debounceTask = Task {
                 try? await Task.sleep(nanoseconds: 500_000_000)
                 guard !Task.isCancelled else { return }
+
                 if q.isEmpty {
                     if let coord = location.location?.coordinate {
                         await courtSearch.search(near: coord)
                     }
-                } else if shouldGeocode(q) {
+                    return
+                }
+
+                // If the query *looks like* a place identifier (ZIP or
+                // "City, ST"), geocode it and search there. Otherwise treat
+                // it as a court/park *name* and search near the user so we
+                // don't end up showing parks in California for "park" typed
+                // in Charlotte.
+                if isExplicitLocation(q) {
+                    await courtSearch.search(query: q)
+                } else if let coord = location.location?.coordinate {
+                    await courtSearch.searchNearby(query: q, near: coord)
+                } else {
                     await courtSearch.search(query: q)
                 }
             }
         }
     }
 
-    private func shouldGeocode(_ s: String) -> Bool {
+    /// Pull-to-refresh handler — re-runs the appropriate court search.
+    private func refreshCourts() async {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            if let coord = location.location?.coordinate {
+                await courtSearch.search(near: coord)
+            }
+        } else if isExplicitLocation(trimmed) {
+            await courtSearch.search(query: trimmed)
+        } else if let coord = location.location?.coordinate {
+            await courtSearch.searchNearby(query: trimmed, near: coord)
+        } else {
+            await courtSearch.search(query: trimmed)
+        }
+    }
+
+    private func isExplicitLocation(_ s: String) -> Bool {
         let zip = s.range(of: #"^\d{5}(-\d{4})?$"#, options: .regularExpression) != nil
-        let hasComma = s.contains(",")
-        let hasMultipleWords = s.split(separator: " ").count >= 1 && s.count >= 3
-        return zip || hasComma || hasMultipleWords
+        // Match "City, ST" or "City, State" — comma + something on each side.
+        let cityState = s.range(of: #"^[A-Za-z\.\- ]+,\s*[A-Za-z\.\- ]+$"#,
+                                options: .regularExpression) != nil
+        return zip || cityState
+    }
+
+    @ViewBuilder
+    private var checkInBanner: some View {
+        if let checkedIn = checkIn.checkedInCourt {
+            HStack(spacing: 10) {
+                HSLivePulse(size: 8)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Playing at \(checkedIn.name)")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.white)
+                    Text("You're counted in the live total.")
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.7))
+                }
+                Spacer()
+                Button("Check out") {
+                    Task { await checkIn.checkOut(uid: auth.profile?.id) }
+                }
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12).frame(height: 30)
+                    .background(Color.white.opacity(0.15))
+                    .clipShape(Capsule())
+            }
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            .background(
+                LinearGradient(colors: [HSColors.live, HSColors.live.opacity(0.85)],
+                               startPoint: .topLeading, endPoint: .bottomTrailing)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        } else if let suggestion = checkIn.suggestion {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: "mappin.and.ellipse")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(HSColors.court)
+                    Text("LOOKS LIKE YOU'RE AT A COURT")
+                        .font(.system(size: 10, weight: .bold))
+                        .kerning(1.2)
+                        .foregroundColor(.white.opacity(0.7))
+                }
+                Text("You at \(suggestion.name)?")
+                    .font(.system(size: 16, weight: .heavy))
+                    .kerning(-0.3)
+                    .foregroundColor(.white)
+                HStack(spacing: 8) {
+                    Button {
+                        Task { await checkIn.confirmSuggestion(as: auth.profile) }
+                    } label: {
+                        Text("Yes — check me in")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(HSColors.navy)
+                            .padding(.horizontal, 14).frame(height: 34)
+                            .background(Color.white)
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    Button { checkIn.dismissSuggestion() } label: {
+                        Text("Not now")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 14).frame(height: 34)
+                            .background(Color.white.opacity(0.12))
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                LinearGradient(colors: [HSColors.navy, HSColors.navyDeep],
+                               startPoint: .topLeading, endPoint: .bottomTrailing)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
     }
 
     private var header: some View {
@@ -133,6 +294,27 @@ struct CourtsView: View {
                     }
                 }
                 Spacer()
+                Button { showNotifications = true } label: {
+                    ZStack(alignment: .topTrailing) {
+                        Image(systemName: "bell.fill")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundColor(HSColors.navy)
+                            .frame(width: 38, height: 38)
+                            .background(Color.white)
+                            .overlay(Circle().stroke(HSColors.gray200, lineWidth: 1))
+                            .clipShape(Circle())
+                            .shadow(color: .black.opacity(0.06), radius: 6, x: 0, y: 2)
+                        if notifications.unreadCount > 0 {
+                            Circle()
+                                .fill(HSColors.court)
+                                .frame(width: 10, height: 10)
+                                .overlay(Circle().stroke(Color.white, lineWidth: 2))
+                                .offset(x: -3, y: 3)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+
                 Button { showMap = true } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "map.fill")
@@ -156,8 +338,27 @@ struct CourtsView: View {
         .padding(.top, 16)
     }
 
+    private var emptyStateText: Text {
+        if location.location == nil {
+            switch location.authorizationStatus {
+            case .denied, .restricted:
+                return Text("Location is off. Enable it in iOS Settings so we can show courts in your area.")
+            case .notDetermined:
+                return Text("Tap the location button to find courts near you.")
+            default:
+                return Text("Finding your area…")
+            }
+        }
+        if !query.isEmpty {
+            return Text("No courts match \"\(query)\" within 15 miles. Try a different term.")
+        }
+        return Text("No courts found in your area yet.")
+    }
+
     private var locationLabel: String {
-        if let label = courtSearch.lastSearchLabel, !label.isEmpty { return label }
+        // Prefer the user's reverse-geocoded city so the header always
+        // identifies *where the user is*, not a court or search term.
+        if let city = location.cityLabel, !city.isEmpty { return city }
         if location.location != nil { return "Near you" }
         switch location.authorizationStatus {
         case .denied, .restricted: return "Location off"
@@ -227,10 +428,13 @@ struct CourtsView: View {
     }
 
     private var countLine: some View {
-        HStack(spacing: 4) {
+        let totalLive = displayedCourts.reduce(0) { sum, c in
+            sum + (liveCounts.counts[courtRepo.stableId(for: c)] ?? c.playing)
+        }
+        return HStack(spacing: 4) {
             Text("\(displayedCourts.count) courts within 15 mi · ")
                 .foregroundColor(HSColors.gray500)
-            Text("\(displayedCourts.reduce(0) { $0 + $1.playing }) hoopers playing now")
+            Text("\(totalLive) hoopers playing now")
                 .foregroundColor(HSColors.live)
                 .fontWeight(.bold)
         }
@@ -242,19 +446,37 @@ struct CourtsView: View {
 
 private struct CourtCard: View {
     let court: HSCourt
+    let liveCount: Int?
+    let liveRating: CourtLiveRating?
     var onOpen: () -> Void
+    @State private var showNavSheet = false
+
+    private var effectivePlaying: Int {
+        liveCount ?? court.playing
+    }
+
+    private var effectiveRating: Double {
+        liveRating?.average ?? court.rating
+    }
+
+    private var coord: CLLocationCoordinate2D? {
+        guard let lat = court.latitude, let lon = court.longitude else { return nil }
+        return CLLocationCoordinate2D(latitude: lat, longitude: lon)
+    }
 
     var body: some View {
         Button(action: onOpen) {
             VStack(alignment: .leading, spacing: 0) {
                 ZStack(alignment: .topLeading) {
-                    HSCourtImage(variant: court.img, height: 132, cornerRadius: 0)
+                    CourtSnapshotImage(coordinate: coord,
+                                       height: 132, cornerRadius: 0,
+                                       fallback: court.img)
 
                     VStack {
                         HStack(alignment: .top) {
                             distancePill
                             Spacer()
-                            if court.playing > 0 { livePill }
+                            if effectivePlaying > 0 { livePill }
                         }
                         Spacer()
                         if court.hasGame, let info = court.gameInfo {
@@ -297,7 +519,7 @@ private struct CourtCard: View {
     private var livePill: some View {
         HStack(spacing: 6) {
             HSLivePulse(size: 6)
-            Text("\(court.playing) playing")
+            Text("\(effectivePlaying) playing")
                 .font(.system(size: 11, weight: .bold))
                 .foregroundColor(.white)
         }
@@ -332,14 +554,14 @@ private struct CourtCard: View {
                         .lineLimit(1)
                 }
                 Spacer()
-                HSStars(rating: court.rating)
+                HSStars(rating: effectiveRating)
             }
 
             HStack {
                 friendsRow
                 Spacer()
                 Button {
-                    openInMaps(court: court)
+                    showNavSheet = true
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "play.fill").font(.system(size: 10))
@@ -351,6 +573,18 @@ private struct CourtCard: View {
                     .clipShape(Capsule())
                 }
                 .buttonStyle(.plain)
+                .confirmationDialog("Navigate to \(court.name)?",
+                                    isPresented: $showNavSheet,
+                                    titleVisibility: .visible) {
+                    ForEach(NavigationLauncher.installedApps()) { app in
+                        Button("Open in \(app.rawValue)") {
+                            NavigationLauncher.open(app, for: court)
+                        }
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text(court.address.isEmpty ? court.name : court.address)
+                }
             }
         }
         .padding(.horizontal, 14).padding(.vertical, 12)
@@ -360,7 +594,9 @@ private struct CourtCard: View {
         let friends = court.friendsHere.compactMap { HSMockData.friend(id: $0) }
         return Group {
             if friends.isEmpty {
-                Text(court.address.isEmpty ? "No friends here yet" : court.address)
+                Text(effectivePlaying > 0
+                     ? "\(effectivePlaying) hoopers playing now"
+                     : (court.address.isEmpty ? "No one playing yet" : court.address))
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(HSColors.gray500)
                     .lineLimit(1)
@@ -387,12 +623,6 @@ private struct CourtCard: View {
         return "\(first)\(extra) here"
     }
 
-    private func openInMaps(court: HSCourt) {
-        let encoded = court.address.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        if let url = URL(string: "http://maps.apple.com/?daddr=\(encoded)") {
-            UIApplication.shared.open(url)
-        }
-    }
 }
 
 private struct CourtsFilterSheet: View {

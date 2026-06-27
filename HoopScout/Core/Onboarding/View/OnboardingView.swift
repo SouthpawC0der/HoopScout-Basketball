@@ -58,7 +58,7 @@ struct OnboardingView: View {
                 .frame(maxWidth: 300, alignment: .leading)
 
             previewCards
-                .padding(.top, 30)
+                .padding(.top, 12)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 32)
@@ -75,9 +75,9 @@ struct OnboardingView: View {
                         colors: [Color(red: 0.173, green: 0.325, blue: 0.510),
                                  Color(red: 0.102, green: 0.212, blue: 0.365)])
                 .rotationEffect(.degrees(1.5))
-                .offset(x: 20, y: 100)
+                .offset(x: 20, y: 80)
         }
-        .frame(height: 220)
+        .frame(height: 180)
     }
 
     private func cardPreview(name: String, meta: String, count: Int, colors: [Color]) -> some View {

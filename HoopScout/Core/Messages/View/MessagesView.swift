@@ -7,18 +7,32 @@ import SwiftUI
 
 struct MessagesView: View {
     @EnvironmentObject private var auth: AuthService
+    @EnvironmentObject private var messaging: MessagingService
+    @EnvironmentObject private var blocks: BlockRepository
 
     @State private var query: String = ""
     @State private var threads: [HSThreadDoc] = []
     @State private var showNewMessage = false
-    @State private var path: [HSThreadDoc] = []
+    // Type-erased so we can push either HSThreadDoc (open a chat) or
+    // HSUserProfile (open a profile preview) onto the same stack.
+    @State private var path = NavigationPath()
     @State private var observeTask: Task<Void, Never>?
+    @State private var userResults: [HSUserProfile] = []
+    @State private var userSearchTask: Task<Void, Never>?
 
     private var currentUid: String? { auth.profile?.id }
 
+    private var visibleThreads: [HSThreadDoc] {
+        guard let uid = currentUid else { return threads }
+        return threads.filter { thread in
+            guard let otherUid = thread.otherUid(currentUid: uid) else { return true }
+            return !blocks.isBlocked(otherUid)
+        }
+    }
+
     private var filteredThreads: [HSThreadDoc] {
-        guard !query.isEmpty else { return threads }
-        return threads.filter { t in
+        guard !query.isEmpty else { return visibleThreads }
+        return visibleThreads.filter { t in
             guard let uid = currentUid,
                   let other = t.otherInfo(currentUid: uid) else { return false }
             return other.name.localizedCaseInsensitiveContains(query)
@@ -34,8 +48,10 @@ struct MessagesView: View {
                     LazyVStack(spacing: 0) {
                         header
                         searchField
-                        activeNowStrip
                         threadList
+                        if !query.isEmpty {
+                            userSearchResults
+                        }
                     }
                     .padding(.bottom, 100)
                 }
@@ -46,8 +62,8 @@ struct MessagesView: View {
             .navigationDestination(for: HSThreadDoc.self) { thread in
                 MessageThreadView(thread: thread)
             }
-            .navigationDestination(for: HSFriend.self) { friend in
-                FriendProfileView(friend: friend)
+            .navigationDestination(for: HSUserProfile.self) { user in
+                FriendProfileView(user: user)
             }
             .sheet(isPresented: $showNewMessage) {
                 NewMessageView { other in
@@ -58,7 +74,100 @@ struct MessagesView: View {
             .task(id: currentUid) {
                 await observeThreads()
             }
+            .onChange(of: messaging.pendingThreadId) { _, newValue in
+                guard let threadId = newValue else { return }
+                routeToThread(threadId)
+            }
+            .onChange(of: threads) { _, _ in
+                // Threads stream just landed — if we had a pending deep-link, retry.
+                if let pending = messaging.pendingThreadId {
+                    routeToThread(pending)
+                }
+            }
+            .onChange(of: query) { _, newValue in
+                userSearchTask?.cancel()
+                let q = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard q.count >= 2 else {
+                    userResults = []
+                    return
+                }
+                userSearchTask = Task {
+                    try? await Task.sleep(nanoseconds: 350_000_000)
+                    guard !Task.isCancelled else { return }
+                    let matches = (try? await UserRepository.shared.search(
+                        query: q, excluding: currentUid)) ?? []
+                    if !Task.isCancelled {
+                        self.userResults = matches
+                    }
+                }
+            }
         }
+    }
+
+    private var userSearchResults: some View {
+        let nonThreadUsers = userResults.filter { user in
+            !threads.contains { thread in
+                thread.participants.contains(user.id ?? "")
+            }
+        }
+        return Group {
+            if !nonThreadUsers.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("OTHER HOOPERS")
+                        .font(.system(size: 11, weight: .bold))
+                        .kerning(1.2)
+                        .foregroundColor(HSColors.gray500)
+                        .padding(.leading, 20).padding(.top, 12)
+                    VStack(spacing: 0) {
+                        ForEach(Array(nonThreadUsers.enumerated()), id: \.element.id) { idx, user in
+                            NavigationLink(value: user) {
+                                userRow(user, isLast: idx == nonThreadUsers.count - 1)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .background(Color.white)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .stroke(HSColors.gray200, lineWidth: 1)
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .padding(.horizontal, 16)
+                }
+            }
+        }
+    }
+
+    private func userRow(_ user: HSUserProfile, isLast: Bool) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                HSAvatar(profile: user, size: 42)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(user.name).font(.system(size: 14, weight: .bold))
+                        .foregroundColor(HSColors.gray900)
+                    Text(user.handle).font(.system(size: 12))
+                        .foregroundColor(HSColors.gray500)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(HSColors.gray300)
+            }
+            .padding(12)
+            .contentShape(Rectangle())
+            if !isLast { Divider().background(HSColors.gray100) }
+        }
+    }
+
+    private func routeToThread(_ threadId: String) {
+        if let thread = threads.first(where: { $0.id == threadId }) {
+            // Reset the stack to just this thread.
+            path = NavigationPath()
+            path.append(thread)
+            messaging.pendingThreadId = nil
+        }
+        // else: threads stream hasn't delivered the new thread yet —
+        // the .onChange(of: threads) handler will retry.
     }
 
     private func observeThreads() async {
@@ -126,44 +235,6 @@ struct MessagesView: View {
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(HSColors.gray200, lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .padding(.horizontal, 20).padding(.top, 12)
-    }
-
-    // Placeholder until friend graph + active-checkin query are wired up.
-    private var activeNowStrip: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("RUNNIN' NOW")
-                .font(.system(size: 11, weight: .bold))
-                .kerning(1.2)
-                .foregroundColor(HSColors.gray500)
-                .padding(.horizontal, 20)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 14) {
-                    ForEach(HSMockData.friends.prefix(5)) { f in
-                        NavigationLink(value: f) {
-                            VStack(spacing: 6) {
-                                ZStack {
-                                    HSAvatar(friend: f, size: 48, online: true)
-                                    if ["f1","f2","f4"].contains(f.id) {
-                                        Circle()
-                                            .stroke(HSColors.court, lineWidth: 2)
-                                            .frame(width: 56, height: 56)
-                                    }
-                                }
-                                .frame(width: 56, height: 56)
-                                Text(f.name.split(separator: " ").first.map(String.init) ?? f.name)
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .kerning(-0.1)
-                                    .foregroundColor(HSColors.gray900)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 20)
-            }
-        }
-        .padding(.top, 14)
     }
 
     private var threadList: some View {

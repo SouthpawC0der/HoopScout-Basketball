@@ -27,13 +27,26 @@ final class FriendsRepository: ObservableObject {
 
     func observeFollowing(for uid: String, limit: Int = 200) -> AsyncStream<[HSFollowDoc]> {
         AsyncStream { continuation in
+            // Don't .order(by: "since") on the query — Firestore drops
+            // docs where the field doesn't yet exist, and `since` is
+            // briefly null after a write that used serverTimestamp().
+            // That caused a "follow appears, then disappears" flicker.
+            // Sort client-side instead.
             let listener = userRef(uid).collection("following")
-                .order(by: "since", descending: true)
                 .limit(to: limit)
-                .addSnapshotListener { snap, _ in
-                    let docs: [HSFollowDoc] = snap?.documents.compactMap {
+                .addSnapshotListener { snap, error in
+                    if let error {
+                        #if DEBUG
+                        print("observeFollowing error:", error.localizedDescription)
+                        #endif
+                        continuation.yield([])
+                        return
+                    }
+                    let docs: [HSFollowDoc] = (snap?.documents.compactMap {
                         try? $0.data(as: HSFollowDoc.self)
-                    } ?? []
+                    } ?? []).sorted { lhs, rhs in
+                        (lhs.since ?? .distantPast) > (rhs.since ?? .distantPast)
+                    }
                     continuation.yield(docs)
                 }
             continuation.onTermination = { _ in listener.remove() }
@@ -43,12 +56,20 @@ final class FriendsRepository: ObservableObject {
     func observeFollowers(for uid: String, limit: Int = 200) -> AsyncStream<[HSFollowDoc]> {
         AsyncStream { continuation in
             let listener = userRef(uid).collection("followers")
-                .order(by: "since", descending: true)
                 .limit(to: limit)
-                .addSnapshotListener { snap, _ in
-                    let docs: [HSFollowDoc] = snap?.documents.compactMap {
+                .addSnapshotListener { snap, error in
+                    if let error {
+                        #if DEBUG
+                        print("observeFollowers error:", error.localizedDescription)
+                        #endif
+                        continuation.yield([])
+                        return
+                    }
+                    let docs: [HSFollowDoc] = (snap?.documents.compactMap {
                         try? $0.data(as: HSFollowDoc.self)
-                    } ?? []
+                    } ?? []).sorted { lhs, rhs in
+                        (lhs.since ?? .distantPast) > (rhs.since ?? .distantPast)
+                    }
                     continuation.yield(docs)
                 }
             continuation.onTermination = { _ in listener.remove() }
@@ -70,22 +91,29 @@ final class FriendsRepository: ObservableObject {
 
     /// Follow `target` — writes my "following" entry, mirrors a "followers"
     /// entry on the target, and bumps both counters in a single batch.
+    /// On success, drops a "new follower" notification into the target's
+    /// inbox so they see it in the bell.
     func follow(target: HSUserProfile, as me: HSUserProfile) async throws {
         guard let myId = me.id, let targetId = target.id, myId != targetId else { return }
         let batch = db.batch()
+
+        // Use Timestamp(date: Date()) instead of FieldValue.serverTimestamp()
+        // for `since` because the snapshot listener was previously dropping
+        // freshly-written docs whose serverTimestamp hadn't resolved yet.
+        let now = Timestamp(date: Date())
 
         let myFollowing = userRef(myId).collection("following").document(targetId)
         batch.setData([
             "name": target.name,
             "initials": target.initials,
-            "since": FieldValue.serverTimestamp()
+            "since": now
         ], forDocument: myFollowing)
 
         let theirFollowers = userRef(targetId).collection("followers").document(myId)
         batch.setData([
             "name": me.name,
             "initials": me.initials,
-            "since": FieldValue.serverTimestamp()
+            "since": now
         ], forDocument: theirFollowers)
 
         batch.setData([
@@ -97,6 +125,18 @@ final class FriendsRepository: ObservableObject {
         ], forDocument: userRef(targetId), merge: true)
 
         try await batch.commit()
+
+        await NotificationRepository.shared.add(
+            NotificationPayload(
+                type: "new_follower",
+                title: "\(me.name) followed you",
+                body: "Tap to view their profile.",
+                userUid: myId,
+                userName: me.name,
+                userInitials: me.initials
+            ),
+            forUid: targetId
+        )
     }
 
     /// Unfollow — deletes both sides + decrements both counters.

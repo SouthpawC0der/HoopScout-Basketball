@@ -55,6 +55,11 @@ struct TermsOfServiceView: View {
                     section("9. Contact",
                             "Questions? support@hoopscoutapp.com")
 
+                    Text("Last updated: June 19, 2026")
+                        .font(.system(size: 11))
+                        .foregroundColor(HSColors.gray500)
+                        .padding(.top, 10)
+
                     NavigationLink {
                         PrivacyPolicyView()
                     } label: {

@@ -13,6 +13,7 @@ struct NewMessageView: View {
     @State private var users: [HSUserProfile] = []
     @State private var isLoading = false
     @State private var error: String?
+    @State private var previewUser: HSUserProfile?
     @Environment(\.dismiss) private var dismiss
 
     private var filtered: [HSUserProfile] {
@@ -40,10 +41,7 @@ struct NewMessageView: View {
                                 .padding(40)
                         } else {
                             ForEach(Array(filtered.enumerated()), id: \.element.id) { idx, u in
-                                Button { onSelect(u) } label: {
-                                    row(for: u, isLast: idx == filtered.count - 1)
-                                }
-                                .buttonStyle(.plain)
+                                row(for: u, isLast: idx == filtered.count - 1)
                             }
                         }
                     }
@@ -66,8 +64,29 @@ struct NewMessageView: View {
                         .foregroundColor(HSColors.navy)
                 }
             }
+            .navigationDestination(for: HSUserProfile.self) { user in
+                FriendProfileView(user: user)
+            }
             .task { await loadUsers() }
+            .onChange(of: query) { _, newValue in
+                Task { await searchIfNeeded(newValue) }
+            }
         }
+    }
+
+    /// When typing a query, run a server search so we can find users outside
+    /// the first 100-user `fetchAll` page.
+    private func searchIfNeeded(_ q: String) async {
+        let trimmed = q.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 2 else { return }
+        let results = (try? await UserRepository.shared.search(
+            query: trimmed, excluding: auth.profile?.id)) ?? []
+        // Merge into users without duplicates.
+        var merged = users
+        for u in results where !merged.contains(where: { $0.id == u.id }) {
+            merged.append(u)
+        }
+        users = merged
     }
 
     private func loadUsers() async {
@@ -98,20 +117,36 @@ struct NewMessageView: View {
     private func row(for u: HSUserProfile, isLast: Bool) -> some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                HSAvatar(profile: u, size: 42)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(u.name).font(.system(size: 15, weight: .bold))
-                        .foregroundColor(HSColors.gray900)
-                    Text(u.handle).font(.system(size: 12))
-                        .foregroundColor(HSColors.gray500)
+                // Tapping anywhere on this main area starts the chat
+                // directly — matches the user's expectation that "click
+                // the name to start a new message".
+                Button { onSelect(u) } label: {
+                    HStack(spacing: 12) {
+                        HSAvatar(profile: u, size: 42)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(u.name).font(.system(size: 15, weight: .bold))
+                                .foregroundColor(HSColors.gray900)
+                            Text(u.handle.isEmpty ? "Tap to message" : u.handle)
+                                .font(.system(size: 12))
+                                .foregroundColor(HSColors.gray500)
+                        }
+                        Spacer()
+                    }
+                    .contentShape(Rectangle())
                 }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(HSColors.gray300)
+                .buttonStyle(.plain)
+
+                // Tucked-away "view profile" affordance for the few cases
+                // where the user wants to look at someone's profile first.
+                NavigationLink(value: u) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(HSColors.gray300)
+                        .frame(width: 32, height: 32)
+                }
+                .buttonStyle(.plain)
             }
-            .padding(14)
-            .contentShape(Rectangle())
+            .padding(.horizontal, 14).padding(.vertical, 8)
             if !isLast { Divider().background(HSColors.gray100) }
         }
     }

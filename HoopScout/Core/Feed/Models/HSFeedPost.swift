@@ -15,6 +15,54 @@ struct HSFeedPost: Identifiable, Hashable {
     var likes: Int
     var comments: Int
     var attachment: Attachment?
+    /// Absolute timestamp used for the 180-day retention filter. Optional so
+    /// existing mock posts (which only carry the human-readable `time`)
+    /// remain valid.
+    var createdAt: Date?
+    /// Display name + initials captured from the author's profile at post
+    /// time. Populated for Firestore-backed posts so the feed can show the
+    /// poster's name to users who aren't in the mock friends graph.
+    var authorName: String?
+    var authorInitials: String?
+    /// Reverse-geocoded "City, ST" stored alongside the post so the feed
+    /// can scope to a local area.
+    var cityLabel: String?
+
+    init(id: String,
+         authorId: String,
+         time: String,
+         kind: Kind,
+         body: String,
+         mood: Mood,
+         likes: Int,
+         comments: Int,
+         attachment: Attachment? = nil,
+         createdAt: Date? = nil,
+         authorName: String? = nil,
+         authorInitials: String? = nil,
+         cityLabel: String? = nil) {
+        self.id = id
+        self.authorId = authorId
+        self.time = time
+        self.kind = kind
+        self.body = body
+        self.mood = mood
+        self.likes = likes
+        self.comments = comments
+        self.attachment = attachment
+        self.createdAt = createdAt
+        self.authorName = authorName
+        self.authorInitials = authorInitials
+        self.cityLabel = cityLabel
+    }
+
+    /// Posts older than 180 days are filtered out before display.
+    static let retentionInterval: TimeInterval = 180 * 24 * 60 * 60
+
+    var isWithinRetention: Bool {
+        guard let createdAt else { return true } // legacy/mock posts
+        return Date().timeIntervalSince(createdAt) < Self.retentionInterval
+    }
 
     enum Kind: String, Hashable {
         case text, game, court
@@ -34,6 +82,17 @@ struct HSFeedPost: Identifiable, Hashable {
         let label: String
         let value: String
     }
+}
+
+struct HSFeedComment: Identifiable, Hashable {
+    let id: String
+    let postId: String
+    let authorId: String
+    let time: String
+    var body: String
+    var likes: Int
+    /// Top-level comments have nil; replies point to their parent's id.
+    let parentId: String?
 }
 
 enum HSFeedMock {
@@ -85,6 +144,42 @@ enum HSFeedMock {
             body: "Shoutout to the older guys at Freedom Park. They'll talk trash for 2 quarters then pull you aside and teach you how to actually use a screen. Real ones.",
             mood: .init(label: "Respect", color: Color(red: 0.043, green: 0.118, blue: 0.247)),
             likes: 154, comments: 19, attachment: nil),
+    ]
+
+    static let comments: [HSFeedComment] = [
+        // p2 (Dre's game recap)
+        .init(id: "c1", postId: "p2", authorId: "f1", time: "32m",
+              body: "6–1 with the bottom of the barrel? That's the real flex.", likes: 14, parentId: nil),
+        .init(id: "c2", postId: "p2", authorId: "f4", time: "30m",
+              body: "they kept stacking me with the same dude who couldn't hit a layup 😭",
+              likes: 8, parentId: "c1"),
+        .init(id: "c3", postId: "p2", authorId: "f6", time: "20m",
+              body: "Pull up to the cage tomorrow. I got next.", likes: 4, parentId: nil),
+
+        // p3 (midrange take)
+        .init(id: "c4", postId: "p3", authorId: "f5", time: "55m",
+              body: "Absolutely. Defenders in pickup live under the line. Easy money.",
+              likes: 22, parentId: nil),
+        .init(id: "c5", postId: "p3", authorId: "f3", time: "48m",
+              body: "Nah, threes still rule. Math is math.", likes: 7, parentId: nil),
+        .init(id: "c6", postId: "p3", authorId: "f2", time: "40m",
+              body: "Spacing matters more than range in a 5v5 half court.",
+              likes: 5, parentId: "c5"),
+
+        // p4 (court vibe)
+        .init(id: "c7", postId: "p4", authorId: "f1", time: "1h",
+              body: "West Charlotte at golden hour is sacred.", likes: 9, parentId: nil),
+
+        // p5 (battle tested)
+        .init(id: "c8", postId: "p5", authorId: "f6", time: "2h",
+              body: "DOG.", likes: 32, parentId: nil),
+        .init(id: "c9", postId: "p5", authorId: "f4", time: "2h",
+              body: "Hope the jaw's good 🙏", likes: 11, parentId: nil),
+
+        // p1 (left hand)
+        .init(id: "c10", postId: "p1", authorId: "f2", time: "10m",
+              body: "Left hand summer. Do 100 left-hand lay-ins before each run.",
+              likes: 6, parentId: nil),
     ]
 
     static let composerMoods: [HSFeedPost.Mood] = [

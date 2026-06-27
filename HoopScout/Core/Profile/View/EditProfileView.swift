@@ -23,6 +23,9 @@ struct EditProfileView: View {
     @State private var saving = false
     @State private var errorMessage: String?
     @State private var didLoad = false
+    @State private var showPhotoSourceDialog = false
+    @State private var showPhotoLibrary = false
+    @State private var showCamera = false
 
     var body: some View {
         ZStack {
@@ -82,6 +85,24 @@ struct EditProfileView: View {
             guard let newItem else { return }
             Task { await handlePickedItem(newItem) }
         }
+        .photosPicker(isPresented: $showPhotoLibrary,
+                      selection: $pickerItem,
+                      matching: .images,
+                      photoLibrary: .shared())
+        .sheet(isPresented: $showCamera) {
+            CameraImagePicker { image in
+                guard let image else { return }
+                Task { await handleCapturedImage(image) }
+            }
+            .ignoresSafeArea()
+        }
+        .confirmationDialog("Profile photo", isPresented: $showPhotoSourceDialog, titleVisibility: .hidden) {
+            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                Button("Take Photo") { showCamera = true }
+            }
+            Button("Choose from Library") { showPhotoLibrary = true }
+            Button("Cancel", role: .cancel) {}
+        }
     }
 
     private var avatar: some View {
@@ -103,9 +124,9 @@ struct EditProfileView: View {
                     ProgressView().tint(.white)
                 }
             }
-            PhotosPicker(selection: $pickerItem,
-                         matching: .images,
-                         photoLibrary: .shared()) {
+            Button {
+                showPhotoSourceDialog = true
+            } label: {
                 Text(uploading ? "Uploading…" : "Change photo")
                     .font(.system(size: 13, weight: .bold))
                     .foregroundColor(HSColors.navy)
@@ -160,19 +181,32 @@ struct EditProfileView: View {
 
     private func handlePickedItem(_ item: PhotosPickerItem) async {
         errorMessage = nil
-        guard let uid = auth.profile?.id else {
-            errorMessage = "Sign in required."
-            return
-        }
         do {
             guard let data = try await item.loadTransferable(type: Data.self),
                   let image = UIImage(data: data) else {
                 errorMessage = "Couldn't read that image."
                 return
             }
-            pickedImage = image
-            uploading = true
-            defer { uploading = false }
+            await uploadAvatarImage(image)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func handleCapturedImage(_ image: UIImage) async {
+        errorMessage = nil
+        await uploadAvatarImage(image)
+    }
+
+    private func uploadAvatarImage(_ image: UIImage) async {
+        guard let uid = auth.profile?.id else {
+            errorMessage = "Sign in required."
+            return
+        }
+        pickedImage = image
+        uploading = true
+        defer { uploading = false }
+        do {
             let url = try await ProfilePhotoService.shared.uploadAvatar(image, uid: uid)
             photoURL = url
             try await UserRepository.shared.setPhotoURL(url, uid: uid)
@@ -205,6 +239,38 @@ struct EditProfileView: View {
             dismiss()
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct CameraImagePicker: UIViewControllerRepresentable {
+    var onPicked: (UIImage?) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(onPicked: onPicked) }
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.cameraDevice = .front
+        picker.allowsEditing = true
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+
+    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let onPicked: (UIImage?) -> Void
+        init(onPicked: @escaping (UIImage?) -> Void) { self.onPicked = onPicked }
+
+        func imagePickerController(_ picker: UIImagePickerController,
+                                   didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            let image = (info[.editedImage] as? UIImage) ?? (info[.originalImage] as? UIImage)
+            picker.dismiss(animated: true) { self.onPicked(image) }
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            picker.dismiss(animated: true) { self.onPicked(nil) }
         }
     }
 }

@@ -26,10 +26,27 @@ struct RunsView: View {
         .background(HSColors.bg.ignoresSafeArea())
         .navigationTitle("Runs")
         .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(for: HSUserProfile.self) { profile in
+            FriendProfileView(user: profile)
+        }
         .task(id: auth.profile?.id) {
             observe()
         }
         .onDisappear { observeTask?.cancel() }
+    }
+
+    private func playerProfile(_ player: HSRunDoc.CoPlayer) -> HSUserProfile {
+        HSUserProfile(
+            id: player.uid,
+            name: player.name,
+            handle: "",
+            location: "",
+            bio: "",
+            skill: "Casual",
+            runs: 0,
+            followers: 0,
+            following: 0
+        )
     }
 
     private var empty: some View {
@@ -82,8 +99,11 @@ struct RunsView: View {
                         .foregroundColor(HSColors.gray500)
                     HStack(spacing: -8) {
                         ForEach(run.coPlayers.prefix(5), id: \.uid) { p in
-                            HSAvatar(uid: p.uid, initials: p.initials, size: 28)
-                                .overlay(Circle().stroke(Color.white, lineWidth: 2))
+                            NavigationLink(value: playerProfile(p)) {
+                                HSAvatar(uid: p.uid, initials: p.initials, size: 28)
+                                    .overlay(Circle().stroke(Color.white, lineWidth: 2))
+                            }
+                            .buttonStyle(.plain)
                         }
                         if run.coPlayers.count > 5 {
                             Text("+\(run.coPlayers.count - 5)")

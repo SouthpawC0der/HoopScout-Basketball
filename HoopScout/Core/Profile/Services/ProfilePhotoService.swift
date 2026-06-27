@@ -23,6 +23,7 @@ final class ProfilePhotoService {
     private init() {}
 
     /// Uploads `image` to `users/{uid}/avatar.jpg` and returns the public URL.
+    /// Retries the upload twice on transient errors before giving up.
     func uploadAvatar(_ image: UIImage, uid: String) async throws -> String {
         let resized = Self.resize(image, maxDimension: 512)
         guard let data = resized.jpegData(compressionQuality: 0.82) else {
@@ -35,9 +36,22 @@ final class ProfilePhotoService {
         let metadata = StorageMetadata()
         metadata.contentType = "image/jpeg"
 
-        _ = try await ref.putDataAsync(data, metadata: metadata)
-        let url = try await ref.downloadURL()
-        return url.absoluteString
+        var attempt = 0
+        var lastError: Error?
+        while attempt < 3 {
+            do {
+                _ = try await ref.putDataAsync(data, metadata: metadata)
+                let url = try await ref.downloadURL()
+                return url.absoluteString
+            } catch {
+                lastError = error
+                attempt += 1
+                if attempt < 3 {
+                    try? await Task.sleep(nanoseconds: UInt64(attempt) * 600_000_000)
+                }
+            }
+        }
+        throw lastError ?? ProfilePhotoError.encodingFailed
     }
 
     private static func resize(_ image: UIImage, maxDimension: CGFloat) -> UIImage {

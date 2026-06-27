@@ -9,10 +9,14 @@ import SwiftUI
 
 struct FeedView: View {
     @EnvironmentObject private var auth: AuthService
+    @EnvironmentObject private var location: LocationManager
+    @EnvironmentObject private var blocks: BlockRepository
     @State private var filter: Filter = .all
-    @State private var posts: [HSFeedPost] = HSFeedMock.posts
+    @State private var livePosts: [HSFeedPost] = []
+    @State private var legacyPosts: [HSFeedPost] = FeedPostStore.shared.load()
     @State private var liked: Set<String> = []
     @State private var showComposer = false
+    @State private var feedObserveTask: Task<Void, Never>?
 
     @State private var searchQuery: String = ""
     @State private var userResults: [HSUserProfile] = []
@@ -32,12 +36,51 @@ struct FeedView: View {
         }
     }
 
+    /// Merge Firestore-backed posts with any legacy local-only posts and the
+    /// session mock feed, dedupe by id, enforce 180-day retention, and sort
+    /// newest first. Posts with no `createdAt` (mock seeds) keep their
+    /// authored order at the tail.
+    private var posts: [HSFeedPost] {
+        var seen = Set<String>()
+        var merged: [HSFeedPost] = []
+        let sources: [[HSFeedPost]] = [livePosts, legacyPosts, HSFeedMock.posts]
+        for source in sources {
+            for post in source where seen.insert(post.id).inserted {
+                merged.append(post)
+            }
+        }
+        return merged.sorted { lhs, rhs in
+            switch (lhs.createdAt, rhs.createdAt) {
+            case let (l?, r?): return l > r
+            case (_?, nil):    return true
+            case (nil, _?):    return false
+            case (nil, nil):   return false
+            }
+        }
+    }
+
     private var displayed: [HSFeedPost] {
+        // Enforce 180-day retention before any tab filtering.
+        let kept = posts.filter { $0.isWithinRetention }
+        let scoped = scopedToLocalArea(kept)
+        let unblocked = scoped.filter { !blocks.isBlocked($0.authorId) }
         switch filter {
-        case .all: return posts
-        case .thoughts: return posts.filter { $0.kind == .text }
-        case .games: return posts.filter { $0.kind == .game }
-        case .courts: return posts.filter { $0.kind == .court }
+        case .all: return unblocked
+        case .thoughts: return unblocked.filter { $0.kind == .text }
+        case .games: return unblocked.filter { $0.kind == .game }
+        case .courts: return unblocked.filter { $0.kind == .court }
+        }
+    }
+
+    /// If the user has a known city, keep posts from that city plus posts
+    /// that have no city tag (mocks, legacy local posts). When the user's
+    /// city is unknown we don't filter — better to show something than an
+    /// empty feed.
+    private func scopedToLocalArea(_ posts: [HSFeedPost]) -> [HSFeedPost] {
+        guard let myCity = location.cityLabel, !myCity.isEmpty else { return posts }
+        return posts.filter { post in
+            guard let postCity = post.cityLabel, !postCity.isEmpty else { return true }
+            return postCity.caseInsensitiveCompare(myCity) == .orderedSame
         }
     }
 
@@ -75,11 +118,14 @@ struct FeedView: View {
             }
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar(.hidden, for: .navigationBar)
+            // Hide the bar's *background* (so the custom inline header is the
+            // only visible chrome) but keep the bar itself so the searchable
+            // drawer below has somewhere to anchor and slide out from.
+            .toolbarBackground(.hidden, for: .navigationBar)
             .searchable(
                 text: $searchQuery,
                 placement: .navigationBarDrawer(displayMode: .automatic),
-                prompt: "Search players"
+                prompt: "Search players by name"
             )
             .onChange(of: searchQuery) { _, newValue in
                 runUserSearch(newValue)
@@ -87,14 +133,49 @@ struct FeedView: View {
             .navigationDestination(for: HSUserProfile.self) { profile in
                 FriendProfileView(user: profile)
             }
+            .task {
+                await observeFeed()
+            }
+            .onDisappear { feedObserveTask?.cancel() }
         }
         .sheet(isPresented: $showComposer) {
             FeedComposerView { post in
-                posts.insert(post, at: 0)
+                var stamped = post
+                stamped.cityLabel = location.cityLabel
+                stamped.authorName = auth.profile?.name
+                stamped.authorInitials = auth.profile?.initials
+                livePosts.insert(stamped, at: 0)
                 showComposer = false
+                publish(stamped)
             }
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
+        }
+    }
+
+    private func observeFeed() async {
+        feedObserveTask?.cancel()
+        feedObserveTask = Task { @MainActor in
+            for await snapshot in FeedRepository.shared.observe() {
+                self.livePosts = snapshot
+            }
+        }
+    }
+
+    private func publish(_ post: HSFeedPost) {
+        guard let profile = auth.profile else { return }
+        Task {
+            do {
+                try await FeedRepository.shared.add(
+                    post: post,
+                    author: profile,
+                    location: location.location,
+                    cityLabel: location.cityLabel)
+            } catch {
+                #if DEBUG
+                print("Feed publish failed:", error.localizedDescription)
+                #endif
+            }
         }
     }
 
@@ -258,15 +339,20 @@ struct FeedView: View {
     private func toggleLike(_ id: String) {
         if liked.contains(id) {
             liked.remove(id)
-            if let idx = posts.firstIndex(where: { $0.id == id }) {
-                posts[idx].likes = max(0, posts[idx].likes - 1)
-            }
+            applyLikeDelta(-1, to: id)
         } else {
             liked.insert(id)
-            if let idx = posts.firstIndex(where: { $0.id == id }) {
-                posts[idx].likes += 1
-            }
+            applyLikeDelta(+1, to: id)
         }
+    }
+
+    private func applyLikeDelta(_ delta: Int, to id: String) {
+        if let idx = livePosts.firstIndex(where: { $0.id == id }) {
+            livePosts[idx].likes = max(0, livePosts[idx].likes + delta)
+        } else if let idx = legacyPosts.firstIndex(where: { $0.id == id }) {
+            legacyPosts[idx].likes = max(0, legacyPosts[idx].likes + delta)
+        }
+        // Mock posts are read-only — no session bump.
     }
 
     private func runUserSearch(_ query: String) {
@@ -286,8 +372,13 @@ struct FeedView: View {
             guard !Task.isCancelled else { return }
             let matches = (try? await UserRepository.shared.search(
                 query: q, excluding: auth.profile?.id)) ?? []
+            let blockedIds = blocks.blockedIds
+            let filtered = matches.filter { profile in
+                guard let id = profile.id else { return true }
+                return !blockedIds.contains(id)
+            }
             if !Task.isCancelled {
-                self.userResults = matches
+                self.userResults = filtered
             }
         }
     }

@@ -56,6 +56,25 @@ final class MessagingService: NSObject, ObservableObject {
         if let threadId = userInfo["threadId"] as? String {
             pendingThreadId = threadId
         }
+        if let type = userInfo["type"] as? String {
+            switch type {
+            case "rate_court":
+                if let courtId = userInfo["courtId"] as? String {
+                    let name = (userInfo["courtName"] as? String) ?? "this court"
+                    CheckInService.shared.pendingRatingPrompt = .court(id: courtId, name: name)
+                }
+            case "rate_user":
+                if let ratedUid = userInfo["ratedUid"] as? String {
+                    let name = (userInfo["ratedName"] as? String) ?? "this hooper"
+                    let initials = (userInfo["ratedInitials"] as? String) ?? "?"
+                    let courtId = userInfo["courtId"] as? String
+                    CheckInService.shared.pendingRatingPrompt = .user(
+                        uid: ratedUid, name: name, initials: initials, courtId: courtId)
+                }
+            default:
+                break
+            }
+        }
     }
 }
 

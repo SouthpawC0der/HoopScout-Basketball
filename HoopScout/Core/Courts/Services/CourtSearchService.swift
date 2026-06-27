@@ -40,10 +40,22 @@ final class CourtSearchService: ObservableObject {
                                                   categories: [.basketball])
         async let parkPOIs = Self.poiSearch(region: region,
                                             categories: [.park])
+        async let fitnessPOIs = Self.poiSearch(region: region,
+                                               categories: [.fitnessCenter])
         async let textMatches = Self.naturalLanguageSearch(region: region,
                                                             query: "basketball court")
+        async let ymcaMatches = Self.naturalLanguageSearch(region: region,
+                                                            query: "YMCA")
+        async let recCenterMatches = Self.naturalLanguageSearch(region: region,
+                                                                 query: "recreation center")
+        async let laFitnessMatches = Self.naturalLanguageSearch(region: region,
+                                                                 query: "LA Fitness")
+        async let gymMatches = Self.naturalLanguageSearch(region: region,
+                                                          query: "gym basketball")
 
-        let combinedItems = await (basketballPOIs + parkPOIs + textMatches)
+        let combinedItems = await (basketballPOIs + parkPOIs + fitnessPOIs
+            + textMatches + ymcaMatches + recCenterMatches
+            + laFitnessMatches + gymMatches)
         let dedupedItems = Self.dedupe(combinedItems)
 
         let allCourts = dedupedItems.compactMap { item in
@@ -53,7 +65,44 @@ final class CourtSearchService: ObservableObject {
                                           maxMiles: radiusMiles)
     }
 
-    /// Search by free-form text (ZIP, city, address).
+    /// Search by free-form text *near the user's current location*. Use this
+    /// for arbitrary terms like "park" or "Latta Park" — they get matched as
+    /// natural-language POIs within ~15 mi of the user, instead of being
+    /// geocoded (which can resolve to a place across the country).
+    func searchNearby(query: String,
+                      near userCoordinate: CLLocationCoordinate2D,
+                      radiusMiles: Double = 15) async {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        isLoading = true
+        errorMessage = nil
+        defer { isLoading = false }
+
+        let meters = radiusMiles * 1609.34
+        let region = MKCoordinateRegion(center: userCoordinate,
+                                        latitudinalMeters: meters,
+                                        longitudinalMeters: meters)
+        let origin = CLLocation(latitude: userCoordinate.latitude,
+                                longitude: userCoordinate.longitude)
+
+        // Run the typed query as a natural-language search constrained to the
+        // user's region, plus the existing basketball/park POI sweep so the
+        // typed term still benefits from category results.
+        async let typedHits = Self.naturalLanguageSearch(region: region, query: trimmed)
+        async let basketballPOIs = Self.poiSearch(region: region, categories: [.basketball])
+        async let parkPOIs = Self.poiSearch(region: region, categories: [.park])
+        async let fitnessPOIs = Self.poiSearch(region: region, categories: [.fitnessCenter])
+
+        let merged = await (typedHits + basketballPOIs + parkPOIs + fitnessPOIs)
+        let deduped = Self.dedupe(merged)
+        let allCourts = deduped.compactMap { Self.makeCourt(from: $0, origin: origin) }
+        self.courts = Self.filterAndSort(allCourts, origin: userCoordinate,
+                                          maxMiles: radiusMiles)
+    }
+
+    /// Search by ZIP/city/address. Geocodes the query, then searches *there*.
+    /// Use only when the query is unambiguously a place identifier.
     func search(query: String, radiusMiles: Double = 15) async {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -209,6 +258,7 @@ final class CourtSearchService: ObservableObject {
     private static func typeLabel(for item: MKMapItem) -> String {
         if item.pointOfInterestCategory == .basketball { return "Outdoor · Full" }
         if item.pointOfInterestCategory == .park { return "Park · Outdoor" }
+        if item.pointOfInterestCategory == .fitnessCenter { return "Indoor · Gym" }
         return "Outdoor"
     }
 

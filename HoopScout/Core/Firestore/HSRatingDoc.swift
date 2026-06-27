@@ -19,7 +19,12 @@ struct HSUserRatingDoc: Codable, Identifiable, Hashable {
     var ratedUid: String
     var raterUid: String
     var raterName: String?
+    /// Overall (average of the four category scores), kept for sort/display.
     var stars: Int
+    var ballHandling: Int?
+    var basketballIQ: Int?
+    var teamPlay: Int?
+    var toughness: Int?
     var comment: String?
     var courtId: String?
     var createdAt: Date?

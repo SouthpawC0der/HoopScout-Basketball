@@ -8,6 +8,10 @@ import SwiftUI
 struct RateCourtView: View {
     let courtId: String
     let courtName: String
+    /// When the caller has a full HSCourt on hand, pass it so the repository
+    /// can ensureCourt() before writing. Required for the very first rating
+    /// of a freshly-discovered court.
+    var court: HSCourt? = nil
 
     @EnvironmentObject private var auth: AuthService
     @Environment(\.dismiss) private var dismiss
@@ -108,8 +112,13 @@ struct RateCourtView: View {
         submitting = true
         defer { submitting = false }
         do {
-            try await RatingRepository.shared.rateCourt(
-                courtId: courtId, raterUid: uid, stars: stars)
+            if let court {
+                try await RatingRepository.shared
+                    .rateCourt(court: court, raterUid: uid, stars: stars)
+            } else {
+                try await RatingRepository.shared
+                    .rateCourt(courtId: courtId, raterUid: uid, stars: stars)
+            }
             dismiss()
         } catch {
             errorMessage = error.localizedDescription

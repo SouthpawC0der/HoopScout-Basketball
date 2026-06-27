@@ -63,6 +63,14 @@ final class NotificationRepository: ObservableObject {
 
     func add(_ payload: NotificationPayload) async {
         guard let uid = Auth.auth().currentUser?.uid else { return }
+        await add(payload, forUid: uid)
+    }
+
+    /// Write a notification into another user's inbox (e.g. a follow ping).
+    /// The Firestore rule allows any signed-in user to *create* a
+    /// notification on someone else's behalf, but only the owner can
+    /// read/update/delete their own inbox.
+    func add(_ payload: NotificationPayload, forUid uid: String) async {
         var data: [String: Any] = [
             "type": payload.type,
             "title": payload.title,

@@ -12,16 +12,24 @@ struct FeedCommentsView: View {
     let post: HSFeedPost
 
     @EnvironmentObject private var auth: AuthService
+    @EnvironmentObject private var blocks: BlockRepository
     @Environment(\.dismiss) private var dismiss
 
     @State private var comments: [HSFeedComment] = []
     @State private var likedComments: Set<String> = []
     @State private var draft: String = ""
     @State private var replyingTo: HSFeedComment?
+    @State private var reportingComment: HSFeedComment?
+    @State private var reportSubmitted = false
+    @State private var blockTarget: (uid: String, name: String)?
     @FocusState private var focused: Bool
 
+    private var visibleComments: [HSFeedComment] {
+        comments.filter { !blocks.isBlocked($0.authorId) }
+    }
+
     private var topLevel: [HSFeedComment] {
-        comments.filter { $0.parentId == nil }
+        visibleComments.filter { $0.parentId == nil }
     }
 
     var body: some View {
@@ -44,6 +52,41 @@ struct FeedCommentsView: View {
             }
             .navigationDestination(for: HSUserProfile.self) { profile in
                 FriendProfileView(user: profile)
+            }
+            .sheet(item: $reportingComment) { comment in
+                if let reporterUid = auth.profile?.id {
+                    ReportSheet(
+                        entity: .comment,
+                        entityId: comment.id,
+                        reportedUid: comment.authorId,
+                        reporterUid: reporterUid,
+                        subjectLabel: "comment",
+                        onSubmitted: { reportSubmitted = true }
+                    )
+                }
+            }
+            .alert("Report submitted", isPresented: $reportSubmitted) {
+                Button("OK") {}
+            } message: {
+                Text("Thanks — we'll review this within 24 hours.")
+            }
+            .confirmationDialog(
+                blockTarget.map { "Block \($0.name)?" } ?? "Block?",
+                isPresented: Binding(
+                    get: { blockTarget != nil },
+                    set: { if !$0 { blockTarget = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("Block", role: .destructive) {
+                    if let uid = blockTarget?.uid {
+                        Task { try? await BlockRepository.shared.block(uid) }
+                    }
+                    blockTarget = nil
+                }
+                Button("Cancel", role: .cancel) { blockTarget = nil }
+            } message: {
+                Text("You won't see their posts, comments, or messages.")
             }
         }
         .onAppear {
@@ -113,7 +156,7 @@ struct FeedCommentsView: View {
     }
 
     private func commentTree(_ comment: HSFeedComment) -> some View {
-        let replies = comments.filter { $0.parentId == comment.id }
+        let replies = visibleComments.filter { $0.parentId == comment.id }
         return VStack(alignment: .leading, spacing: 10) {
             commentRow(comment)
             if !replies.isEmpty {
@@ -193,6 +236,25 @@ struct FeedCommentsView: View {
                         }
                         .buttonStyle(.plain)
                     }
+
+                    if comment.authorId != auth.profile?.id {
+                        Menu {
+                            Button(role: .destructive) {
+                                reportingComment = comment
+                            } label: {
+                                Label("Report comment", systemImage: "flag")
+                            }
+                            Button(role: .destructive) {
+                                blockTarget = (comment.authorId, author?.name ?? "this hooper")
+                            } label: {
+                                Label("Block \(author?.name ?? "user")", systemImage: "hand.raised")
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(HSColors.gray500)
+                        }
+                    }
                 }
                 .padding(.leading, 4)
             }
@@ -232,7 +294,7 @@ struct FeedCommentsView: View {
                         .focused($focused)
                         .font(.system(size: 14))
                         .padding(.leading, 12)
-                    Button(action: post) {
+                    Button(action: submitComment) {
                         Image(systemName: "arrow.up")
                             .font(.system(size: 12, weight: .bold))
                             .foregroundColor(.white)
@@ -276,7 +338,7 @@ struct FeedCommentsView: View {
         focused = true
     }
 
-    private func post() {
+    private func submitComment() {
         let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let newComment = HSFeedComment(

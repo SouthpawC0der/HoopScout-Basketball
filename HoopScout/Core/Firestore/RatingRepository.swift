@@ -15,8 +15,19 @@ final class RatingRepository {
 
     // MARK: - Courts
 
-    /// Submit (or update) the caller's rating for a court. Updates a rolling
-    /// average on the court doc atomically with the rating doc.
+    /// Submit (or update) the caller's rating for a court. The court doc must
+    /// exist before the transaction runs (otherwise setData(merge:true) would
+    /// attempt to *create* it and fail the create rule). Pass a full HSCourt
+    /// whenever possible so we can ensureCourt up front.
+    func rateCourt(court: HSCourt, raterUid: String, stars: Int) async throws {
+        try await CourtRepository.shared.ensureCourt(court)
+        let courtId = CourtRepository.shared.stableId(for: court)
+        try await rateCourt(courtId: courtId, raterUid: raterUid, stars: stars)
+    }
+
+    /// Lower-level path used when only the courtId is known (e.g. when a
+    /// notification deep-links into the rating sheet after the check-in
+    /// already ensured the court doc exists).
     func rateCourt(courtId: String, raterUid: String, stars: Int) async throws {
         let clamped = max(1, min(5, stars))
         let courtRef = db.collection("courts").document(courtId)
@@ -65,13 +76,23 @@ final class RatingRepository {
 
     // MARK: - Users
 
-    /// Submit a rating for another user, with an optional comment.
+    /// Submit a rating for another user across four categories. The overall
+    /// `stars` value is the rounded average of the four. Optional comment +
+    /// court reference are persisted as-is.
     func rateUser(ratedUid: String,
                   raterUid: String,
                   raterName: String?,
-                  stars: Int,
+                  ballHandling: Int,
+                  basketballIQ: Int,
+                  teamPlay: Int,
+                  toughness: Int,
                   comment: String?,
                   courtId: String?) async throws {
+        let bh = max(1, min(5, ballHandling))
+        let iq = max(1, min(5, basketballIQ))
+        let tp = max(1, min(5, teamPlay))
+        let tg = max(1, min(5, toughness))
+        let stars = Int((Double(bh + iq + tp + tg) / 4.0).rounded())
         let clamped = max(1, min(5, stars))
         let userRef = db.collection("users").document(ratedUid)
         // One rating doc per rater, per rated user — repeat ratings overwrite.
@@ -102,6 +123,10 @@ final class RatingRepository {
                     "ratedUid": ratedUid,
                     "raterUid": raterUid,
                     "stars": clamped,
+                    "ballHandling": bh,
+                    "basketballIQ": iq,
+                    "teamPlay": tp,
+                    "toughness": tg,
                     "createdAt": FieldValue.serverTimestamp()
                 ]
                 if let raterName { data["raterName"] = raterName }

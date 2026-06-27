@@ -10,8 +10,35 @@ struct FeedPostCard: View {
     let liked: Bool
     var onToggleLike: () -> Void
 
+    @EnvironmentObject private var auth: AuthService
+    @EnvironmentObject private var blocks: BlockRepository
+    @State private var showComments = false
+    @State private var showReport = false
+    @State private var reportSubmitted = false
+    @State private var showBlockConfirm = false
+
     private var author: HSFriend? {
         HSMockData.friend(id: post.authorId)
+    }
+
+    /// True when the signed-in user authored this post.
+    private var isSelfAuthor: Bool {
+        guard let myId = auth.profile?.id else { return false }
+        return post.authorId == myId
+    }
+
+    /// What name to render in the header. Prefers the signed-in user's name
+    /// when they wrote the post, then the name captured at post time by
+    /// FeedRepository, then the mock-friend lookup, then a generic fallback.
+    private var authorName: String {
+        if isSelfAuthor, let me = auth.profile { return me.name }
+        if let name = post.authorName, !name.isEmpty { return name }
+        return author?.name ?? "Hooper"
+    }
+
+    private var authorInitialsFallback: String {
+        if let initials = post.authorInitials, !initials.isEmpty { return initials }
+        return "?"
     }
 
     private var likeCount: Int { post.likes }
@@ -45,43 +72,106 @@ struct FeedPostCard: View {
                 .stroke(HSColors.line, lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .sheet(isPresented: $showComments) {
+            FeedCommentsView(post: post)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showReport) {
+            if let reporterUid = auth.profile?.id {
+                ReportSheet(
+                    entity: .post,
+                    entityId: post.id,
+                    reportedUid: post.authorId,
+                    reporterUid: reporterUid,
+                    subjectLabel: "post",
+                    onSubmitted: { reportSubmitted = true }
+                )
+            }
+        }
+        .alert("Report submitted", isPresented: $reportSubmitted) {
+            Button("OK") {}
+        } message: {
+            Text("Thanks — we'll review this within 24 hours.")
+        }
+        .confirmationDialog("Block \(authorName)?",
+                            isPresented: $showBlockConfirm,
+                            titleVisibility: .visible) {
+            Button("Block", role: .destructive) {
+                Task { try? await BlockRepository.shared.block(post.authorId) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("You won't see their posts, comments, or messages.")
+        }
     }
 
     // MARK: - Header
 
+    private var authorProfile: HSUserProfile? {
+        if isSelfAuthor { return auth.profile }
+        return HSMockData.userProfile(forFriendId: post.authorId)
+    }
+
+    @ViewBuilder
     private var headerRow: some View {
         HStack(alignment: .center, spacing: 10) {
-            if let author {
-                HSAvatar(friend: author, size: 40)
-            } else {
-                HSAvatar(uid: post.authorId, initials: "?", size: 40)
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(author?.name ?? "Hooper")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(HSColors.gray900)
-                    Circle().fill(HSColors.gray300).frame(width: 3, height: 3)
-                    Text(post.time)
-                        .font(.system(size: 12))
-                        .foregroundColor(HSColors.gray500)
-                }
-                HStack(spacing: 6) {
-                    Circle().fill(post.mood.color).frame(width: 6, height: 6)
-                    Text("feeling \(post.mood.label.lowercased())")
-                        .font(.system(size: 11.5, weight: .semibold))
-                        .kerning(0.2)
-                        .foregroundColor(HSColors.gray500)
+            authorLink {
+                if isSelfAuthor, let me = auth.profile {
+                    HSAvatar(profile: me, size: 40)
+                } else if let author {
+                    HSAvatar(friend: author, size: 40)
+                } else {
+                    HSAvatar(uid: post.authorId, initials: authorInitialsFallback, size: 40)
                 }
             }
-            Spacer()
-            Button {} label: {
+            authorLink {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(authorName)
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundColor(HSColors.gray900)
+                        Circle().fill(HSColors.gray300).frame(width: 3, height: 3)
+                        Text(post.time)
+                            .font(.system(size: 12))
+                            .foregroundColor(HSColors.gray500)
+                    }
+                    HStack(spacing: 6) {
+                        Circle().fill(post.mood.color).frame(width: 6, height: 6)
+                        Text("feeling \(post.mood.label.lowercased())")
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .kerning(0.2)
+                            .foregroundColor(HSColors.gray500)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            Menu {
+                if !isSelfAuthor {
+                    Button(role: .destructive) { showReport = true } label: {
+                        Label("Report post", systemImage: "flag")
+                    }
+                    Button(role: .destructive) { showBlockConfirm = true } label: {
+                        Label("Block \(authorName)", systemImage: "hand.raised")
+                    }
+                }
+            } label: {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 14, weight: .bold))
                     .foregroundColor(HSColors.gray500)
                     .padding(4)
             }
-            .buttonStyle(.plain)
+        }
+    }
+
+    @ViewBuilder
+    private func authorLink<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        if let profile = authorProfile {
+            NavigationLink(value: profile) { content() }
+                .buttonStyle(.plain)
+        } else {
+            content()
         }
     }
 
@@ -172,7 +262,7 @@ struct FeedPostCard: View {
             }
             .buttonStyle(.plain)
 
-            Button {} label: {
+            Button { showComments = true } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "bubble.left")
                         .font(.system(size: 16, weight: .semibold))
